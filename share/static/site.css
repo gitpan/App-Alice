@@ -1,0 +1,32 @@
+div.window.active {
+  display: block;
+}
+
+div.window {
+  display: none;
+}
+
+input[type="hidden"] {
+  display: none;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+ul#tabs {
+  z-index: 20
+}
+
+ul#tabs li:hover {
+  cursor: default;
+}
+
+ul#controls {
+  z-index: 30;
+}
+
+ul#controls li.disabled {
+  display: none;
+}
