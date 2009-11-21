@@ -11,7 +11,7 @@ use App::Alice::Signal;
 use App::Alice::Config;
 use Moose;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 has cond => (
   is       => 'rw',
@@ -117,6 +117,7 @@ sub run {
   $self->cond(AnyEvent->condvar);
   
   # initialize template and httpd because they are lazy
+  $self->info_window;
   $self->template;
   $self->httpd;
 
@@ -178,9 +179,10 @@ sub tab_order {
 
 sub buffered_messages {
   my ($self, $min) = @_;
+  my $max = 0;
   return [ map {$_->{buffered} = 1; $_;}
-           grep {$_->{msgid} > $min}
-           map {@{$_->msgbuffer}} $self->windows
+           grep {$_->{msgid} > $min or $min > $max}
+           map {$max = $_->msgid; @{$_->msgbuffer}} $self->windows
          ];
 }
 
@@ -249,16 +251,35 @@ sub add_irc_server {
   );
 }
 
+sub reload_config {
+  my $self = shift;
+  for (keys %{$self->config->servers}) {
+    if (!$self->ircs->{$_}) {
+      $self->add_irc_server(
+        $_, $self->config->servers->{$_}
+      );
+    }
+    else {
+      $self->ircs->{$_}->config($self->config->servers->{$_});
+    }
+  }
+  for ($self->connections) {
+    if (!$self->config->servers->{$_->alias}) {
+      $_->remove;
+    }
+  }
+}
+
 sub log_info {
-  my ($self, $session, $body, $highlight) = @_;
+  my ($self, $session, $body, $highlight, $monospaced) = @_;
   $highlight = 0 unless $highlight;
-  $self->info_window->format_message($session, $body, highlight => $highlight);
+  $self->info_window->format_message($session, $body, $highlight, $monospaced);
 }
 
 sub send {
   my ($self, $messages, $force) = @_;
   # add any highlighted messages to the log window
-  push @$messages, map {$self->log_info($_->{nick}, $_->{body}, highlight => 1)}
+  push @$messages, map {$self->log_info($_->{nick}, $_->{body}, 1)}
                   grep {$_->{highlight}} @$messages;
   
   $self->httpd->broadcast($messages, $force);
@@ -291,7 +312,8 @@ sub render {
 
 sub log_debug {
   my $self = shift;
-  say STDERR join " ", @_ if $self->config->debug;
+  return unless $self->config->show_debug and @_;
+  say STDERR join " ", @_;
 }
 
 __PACKAGE__->meta->make_immutable;

@@ -7236,7 +7236,7 @@ Alice.Application = Class.create({
       this.configWindow.focus();
 
     } else {
-      this.configWindow = window.open(null, "config", "resizable=no,scrollbars=no,status=no,toolbar=no,location=no,width=500,height=410");
+      this.configWindow = window.open(null, "config", "resizable=no,scrollbars=no,status=no,toolbar=no,location=no,width=500,height=480");
 
       this.connection.getConfig(function(transport) {
         this.configWindow.document.write(transport.responseText);
@@ -7621,7 +7621,7 @@ Alice.Window = Class.create({
   addMessage: function(message) {
     if (message.html || message.full_html) {
       if (message.nick && message.nick == this.lastNick) {
-        if (this.application.messagesAreMonospacedFor(message.nick))
+        if (this.application.messagesAreMonospacedFor(message.nick) || message.monospaced)
           this.messages.down('li:last-child div.msg').insert(
             "<br>" + this.application.applyFilters(message.html));
         else if (message.event == "say")

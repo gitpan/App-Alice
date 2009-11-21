@@ -20,7 +20,7 @@ has 'alias' => (
 
 has 'config' => (
   isa      => 'HashRef',
-  is       => 'ro',
+  is       => 'rw',
   lazy     => 1,
   default  => sub {
     my $self = shift;
@@ -32,6 +32,16 @@ has 'app' => (
   isa      => 'App::Alice',
   is       => 'ro',
   required => 1,
+);
+
+has 'reconnect_timer' => (
+  is => 'rw'
+);
+
+has [qw/is_connected disabled removed/] => (
+  is  => 'rw',
+  isa => 'Bool',
+  default => 0,
 );
 
 has nicks => (
@@ -51,8 +61,8 @@ has nicks => (
 
 sub BUILD {
   my $self = shift;
-  $self->app->send([$self->log_info("connecting")]);
   $self->cl->enable_ssl(1) if $self->config->{ssl};
+  $self->disabled(1) unless $self->config->{autoconnect};
   $self->cl->reg_cb(
     registered     => sub{$self->registered(@_)},
     channel_add    => sub{$self->channel_add(@_)},
@@ -65,18 +75,19 @@ sub BUILD {
     publicmsg      => sub{$self->publicmsg(@_)},
     privatemsg     => sub{$self->privatemsg(@_)},
     connect        => sub{$self->connected(@_)},
+    disconnect     => sub{$self->disconnected(@_)},
     irc_352        => sub{$self->irc_352(@_)}, # WHO info
     irc_366        => sub{$self->irc_366(@_)}, # end of NAMES
-    irc_372        => sub{$self->log_info(@_)}, # MOTD info
-    irc_377        => sub{$self->log_info(@_)}, # MOTD info
-    irc_378        => sub{$self->log_info(@_)}, # MOTD info
+    irc_372        => sub{$self->log_info($_[1]->{params}[1], 1)}, # MOTD info
+    irc_377        => sub{$self->log_info($_[1]->{params}[1], 1)}, # MOTD info
+    irc_378        => sub{$self->log_info($_[1]->{params}[1], 1)}, # MOTD info
   );
-  $self->connect;
+  $self->connect unless $self->disabled;
 }
 
 sub log_info {
-  my ($self, $msg) = @_;
-  $self->app->log_info($self->alias, $msg);
+  my ($self, $msg, $monospaced) = @_;
+  $self->app->log_info($self->alias, $msg, 0, $monospaced);
 }
 
 sub window {
@@ -98,6 +109,8 @@ sub windows {
 
 sub connect {
   my $self = shift;
+  $self->disabled(0);
+  $self->app->send([$self->log_info("connecting")]);
   $self->cl->connect(
     $self->config->{host}, $self->config->{port},
     {
@@ -115,15 +128,31 @@ sub connected {
     $self->app->send([
       $self->log_info("connect error: $err")
     ]);
+    $self->reconnect;
   }
+  else {
+    $self->is_connected(1);
+  }
+}
+
+sub reconnect {
+  my $self = shift;
+  $self->app->send([$self->log_info("reconnecting in 10 seconds")]);
+  $self->reconnect_timer(
+    AnyEvent->timer(after => 10, cb => sub {
+      unless ($self->is_connected) {
+        $self->connect;
+      }
+    })
+  );
 }
 
 sub registered {
   my $self = shift;
   my @log;
   $self->cl->enable_ping (60, sub {
-    $self->log_info("disconnected from server, reconnecting in 10 seconds");
-    AnyEvent->timer(after => 10, cb => sub {shift->connect});
+    $self->app->send([$self->log_info("ping timeout")]);
+    $self->reconnect;
   });
   push @log, $self->log_info("connected");
   for (@{$self->config->{on_connect}}) {
@@ -139,15 +168,26 @@ sub registered {
 };
 
 sub disconnected {
-  my $self = shift;
-  $self->app->send(
-    [$self->log_info("disconnected")]
-  );
+  my ($self, $cl, $reason) = @_;
+  $self->app->send([$self->log_info("disconnected: $reason")]);
+  $self->is_connected(0);
+  $self->reconnect unless $self->disabled;
+  if ($self->removed) {
+    delete $self->app->ircs->{$self->alias};
+    $self = undef;
+  }
 }
 
 sub disconnect {
   my $self = shift;
-  $self->cl->disconnect($self->app->config->quitmsg);
+  $self->disabled(1);
+  $self->cl->send_srv("QUIT" => $self->app->config->quitmsg);
+}
+
+sub remove {
+  my $self = shift;
+  $self->removed(1);
+  $self->disconnect;
 }
 
 sub publicmsg {
@@ -156,19 +196,24 @@ sub publicmsg {
   my $text = $msg->{params}[1];
   my $window = $self->window($channel);
   $self->app->send([$window->format_message($nick, $text)]);
-};
+}
 
 sub privatemsg {
   my ($self, $cl, $nick, $msg) = @_;
-  my $window = $self->window($nick);
-  $self->app->send([$window->format_message($nick, $msg->{params}[1])]);
-};
+  if ($msg->{command} eq "PRIVMSG") {
+    my $window = $self->window($nick);
+    $self->app->send([$window->format_message($nick, $msg->{params}[1])]); 
+  }
+  elsif ($msg->{command} eq "NOTICE") {
+    $self->app->send([$self->log_info($msg->{params}[1])]);
+  }
+}
 
 sub ctcp_action {
   my ($self, $cl, $nick, $channel, $msg, $type) = @_;
   my $window = $self->window($channel);
   $self->app->send([$window->format_message($nick, "• $msg")]);
-};
+}
 
 sub nick_change {
   my ($self, $cl, $old_nick, $new_nick, $is_self) = @_;
@@ -215,6 +260,7 @@ sub part {
   if ($is_self) {
     my $window = $self->app->find_window($channel, $self);
     if ($window) {
+      $self->app->send([$self->log_info("leaving $channel")]);
       $self->app->close_window($window);
     }
   }
@@ -334,7 +380,8 @@ sub whois_table {
 
 sub log_debug {
   my $self = shift;
-  say STDERR join " ", @_ if $self->config->{debug};
+  return unless $self->config->show_debug and @_;
+  say STDERR join " ", @_;;
 }
 
 __PACKAGE__->meta->make_immutable;

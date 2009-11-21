@@ -48,12 +48,12 @@ share/static/iphone.css
 share/static/site.css
 share/static/site.js
 share/templates/announcement.html
-share/templates/config.html
 share/templates/event.html
 share/templates/index.html
 share/templates/message.html
-share/templates/server_config.html
+share/templates/new_server.html
 share/templates/server_listitem.html
+share/templates/servers.html
 share/templates/tab.html
 share/templates/window.html
 t/01-use.t

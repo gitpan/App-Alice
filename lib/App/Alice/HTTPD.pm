@@ -47,7 +47,7 @@ has 'ping_timer' => (
 sub BUILD {
   my $self = shift;
   my $httpd = AnyEvent::HTTPD->new(
-    port => $self->config->port,
+    port => $self->config->http_port,
   );
   $httpd->reg_cb(
     '/serverconfig' => sub{$self->server_config(@_)},
@@ -211,7 +211,7 @@ sub send_index {
 sub send_config {
   my ($self, $httpd, $req) = @_;
   $self->log_debug("serving config");
-  my $output = $self->app->render('config');
+  my $output = $self->app->render('servers');
   $req->respond([200, 'ok', {}, $output]);
 }
 
@@ -219,7 +219,7 @@ sub server_config {
   my ($self, $httpd, $req) = @_;
   $self->log_debug("serving blank server config");
   my $name = $req->parm('name');
-  my $config = $self->app->render('server_config', $name);
+  my $config = $self->app->render('new_server', $name);
   my $listitem = $self->app->render('server_listitem', $name);
   $req->respond([200, 'ok', {"Cache-control" => "no-cache"}, 
                 to_json({config => $config, listitem => $listitem})]);
@@ -228,7 +228,7 @@ sub server_config {
 sub save_config {
   my ($self, $httpd, $req) = @_;
   $self->log_debug("saving config");
-  my $new_config = {};
+  my $new_config = {servers => {}};
   my %params = $req->vars;
   for my $name (keys %params) {
     next unless $params{$name};
@@ -250,6 +250,7 @@ sub save_config {
     }
   }
   $self->config->merge($new_config);
+  $self->app->reload_config();
   $self->config->write;
   $req->respond([200, 'ok'])
 }
@@ -271,11 +272,13 @@ sub not_found  {
 
 sub log_debug {
   my $self = shift;
-  print STDERR join " ", @_ if $self->config->debug;
+  return unless $self->config->show_debug and @_;
+  print STDERR join " ", @_ if $self->config->show_debug;
   print "\n";
 }
 
 sub log_info {
+  return unless @_;
   print STDERR join " ", @_;
   print STDERR "\n";
 }
