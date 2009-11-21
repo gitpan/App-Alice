@@ -21,23 +21,17 @@ no_index:
     - share/sprockets
     - t
 requires:
-  DateTime: 0.49
-  DateTime::TimeZone: 0.91
+  AnyEvent: 5.2
+  AnyEvent::HTTP: 0
+  AnyEvent::HTTPD: 0
+  AnyEvent::IRC: 0.95
   Digest::CRC: 0.14
   File::ShareDir: 0.01
-  IRC::Formatting::HTML: 0.03
+  IRC::Formatting::HTML: 0.08
   JSON: 2.12
   Moose: 0.90
-  MooseX::ClassAttribute: 0.09
-  MooseX::Declare: 0.22
-  MooseX::POE: 0.205
-  POE::Component::IRC: 5.88
-  POE::Component::SSLify: 0.10
-  POE::Component::Server::HTTP: 0.09
-  Template: 2.20
-  Template::Plugin::JavaScript: 0.01
-  YAML: 0.66
-  perl: 5.10.0
+  Text::MicroTemplate: 0.09
+  perl: 5.8.0
 resources:
   license: http://dev.perl.org/licenses/
 version: 0.01

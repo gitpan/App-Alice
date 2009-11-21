@@ -1,392 +1,284 @@
-use MooseX::Declare;
+package App::Alice::HTTPD;
 
-class App::Alice::HTTPD {
-  use feature ':5.10';
-  use MooseX::POE::SweetArgs qw/event/;
-  use POE::Component::Server::HTTP;
-  use App::Alice::AsyncGet;
-  use App::Alice::CommandDispatch;
-  use MIME::Base64;
-  use Time::HiRes qw/time/;
-  use JSON;
-  use Template;
-  use URI::QueryParam;
-  use Compress::Zlib;
+use AnyEvent;
+use AnyEvent::HTTPD;
+use AnyEvent::HTTP;
+use App::Alice::Stream;
+use App::Alice::CommandDispatch;
+use MIME::Base64;
+use JSON;
+use Moose;
 
-  has 'app' => (
-    is  => 'ro',
-    isa => 'App::Alice',
-    required => 1,
-  );
+has 'app' => (
+  is  => 'ro',
+  isa => 'App::Alice',
+  required => 1,
+);
 
-  has 'streams' => (
-    is  => 'rw',
-    isa => 'ArrayRef[POE::Component::Server::HTTP::Response]',
-    default => sub {[]},
-  );
+has 'httpd' => (
+  is  => 'rw',
+  isa => 'AnyEvent::HTTPD'
+);
 
-  has 'seperator' => (
-    is  => 'ro',
-    isa => 'Str',
-    default => '--xalicex',
-  );
-
-  has 'commands' => (
-    is => 'ro',
-    isa => 'ArrayRef[Str]',
-    default => sub { [qw/join part names topic me query/] },
-    lazy => 1,
-  );
-  
-  has 'tt' => (
-    is => 'ro',
-    isa => 'Template',
-    lazy => 1,
-    default => sub { shift->app->tt }
-  );
-  
-  has 'config' => (
-    is => 'ro',
-    isa => 'App::Alice::Config',
-    lazy => 1,
-    default => sub {shift->app->config},
-  );
-  
-  has 'session' => (
-    is => 'rw',
-    isa => 'Int'
-  );
-
-  sub BUILD {
-    my $self = shift;
-    $self->meta->error_class('Moose::Error::Croak');
-    POE::Component::Server::HTTP->new(
-      Port            => $self->config->port,
-      Address         => $self->config->address,
-      PreHandler      => {
-        '/'             => sub{$self->check_authentication(@_)},
-      },
-      ContentHandler  => {
-        '/serverconfig' => sub{$self->server_config(@_)},
-        '/config'       => sub{$self->send_config(@_)},
-        '/save'         => sub{$self->save_config(@_)},
-        '/tabs'         => sub{$self->tab_order(@_)},
-        '/view'         => sub{$self->send_index(@_)},
-        '/stream'       => sub{$self->setup_stream(@_)},
-        '/favicon.ico'  => sub{$self->not_found(@_)},
-        '/say'          => sub{$self->handle_message(@_)},
-        '/static/'      => sub{$self->handle_static(@_)},
-        '/get/'         => sub{async_fetch($_[1],$_[0]->uri); return RC_WAIT;},
-      },
-      StreamHandler    => sub{$self->handle_stream(@_)},
-    );
+has 'streams' => (
+  traits => ['Array'],
+  is  => 'rw',
+  auto_deref => 1,
+  isa => 'ArrayRef[App::Alice::Stream]',
+  default => sub {[]},
+  handles => {
+    add_stream   => 'push',
+    no_streams   => 'is_empty',
+    stream_count => 'count',
   }
-  
-  sub START {
-    my ($self, $session) = @_;
-    $self->session($session->ID);
-    POE::Kernel->delay(ping => 15);
-  }
+);
 
-  event ping => sub {
-    my $self = shift;
-    $self->yield(send => [{
-      type  => "action",
-      event => "ping",
-    }]);
-    POE::Kernel->delay(ping => 15);
+has 'config' => (
+  is => 'ro',
+  isa => 'App::Alice::Config',
+  lazy => 1,
+  default => sub {shift->app->config},
+);
+
+has 'ping_timer' => (
+  is  => 'rw',
+);
+
+sub BUILD {
+  my $self = shift;
+  my $httpd = AnyEvent::HTTPD->new(
+    port => $self->config->port,
+  );
+  $httpd->reg_cb(
+    '/serverconfig' => sub{$self->server_config(@_)},
+    '/config'       => sub{$self->send_config(@_)},
+    '/save'         => sub{$self->save_config(@_)},
+    '/tabs'         => sub{$self->tab_order(@_)},
+    '/view'         => sub{$self->send_index(@_)},
+    '/stream'       => sub{$self->setup_stream(@_)},
+    '/favicon.ico'  => sub{$self->not_found($_[1])},
+    '/say'          => sub{$self->handle_message(@_)},
+    '/static'       => sub{$self->handle_static(@_)},
+    '/get'          => sub{$self->image_proxy(@_)},
+    'client_disconnected' => sub{$self->purge_disconnects(@_)},
+  );
+  $self->httpd($httpd);
+  $self->ping;
+}
+
+sub ping {
+  my $self = shift;
+  $self->ping_timer(AnyEvent->timer(
+    after    => 5,
+    interval => 10,
+    cb       => sub {
+      $self->broadcast([{
+        type => "action",
+        event => "ping",
+      }]);
+    }
+  ));
+}
+
+sub image_proxy {
+  my ($self, $httpd, $req) = @_;
+  my $url = $req->url;
+  $url =~ s/^\/get\///;
+  http_get $url, sub {
+    my ($data, $headers) = @_;
+    $req->respond([$headers->{Status},$headers->{Reason},$headers,$data]);
   };
+}
+
+sub broadcast {
+  my ($self, $data, $force) = @_;
+  return if $self->no_streams;
   
-  event send => sub {
-    my ($self, $data, $force) = @_;
-    return unless $self->has_clients;
-    
-    for my $res (@{$self->streams}) {
+  if (@$data) {
+    for my $stream ($self->streams) {
       for my $item (@$data) {
-        given ($item->{type}) {
-          when ("message") { push @{$res->{msgs}}, $item }
-          when ("action") { push @{$res->{actions}}, $item }
+        if ($item->{type} eq "message") {
+          $stream->add_msg($item);
+        }
+        elsif ($item->{type} eq "action") {
+          $stream->add_action($item);
         }
       }
     }
-    $_->continue for @{$self->streams};
-  };
-  
-  event delay_resend => sub {
-    my ($self, $req, $res, $delay) = @_;
-    return if $res->{resend_id};
-    $res->{resend_id} = POE::Kernel->alarm_set("resend", time + $delay, $req, $res);
-  };
-  
-  event resend => sub {
-    my ($self, $req, $res) = @_;
-    $res->{delayed} = 0;
-    $res->continue;
-  };
+  }
+  $_->broadcast for @{$self->streams};
+};
 
-  method check_authentication ($req, $res) {
-    return RC_OK unless ($self->config->auth
-        and ref $self->config->auth eq 'HASH'
-        and $self->config->auth->{username}
-        and $self->config->auth->{password});
-
-    if (my $auth  = $req->header('authorization')) {
-      $auth =~ s/^Basic //;
-      $auth = decode_base64($auth);
-      my ($user,$password)  = split(/:/, $auth);
-      if ($self->config->auth->{username} eq $user &&
-          $self->config->auth->{password} eq $password) {
-        return RC_OK;
-      }
-      else {
-        $self->log_debug("auth failed");
-      }
-    }
-    $res->code(401);
-    $res->header('WWW-Authenticate' => 'Basic realm="Alice"');
-    $res->close();
-    return RC_DENY;
+sub check_authentication {
+  my ($self, $httpd, $req) = @_;
+  unless ($self->config->auth
+      and ref $self->config->auth eq 'HASH'
+      and $self->config->auth->{username}
+      and $self->config->auth->{password}) {
+    $req->respond([200,'ok']) 
   }
 
-  method setup_stream ($req, $res) {
-    # XHR tries to reconnect again with this header for some reason
-    return RC_OK if defined $req->header('error');
-    
-    my $local_time = time;
-
-    $res->streaming(1);
-    $res->content_type('multipart/mixed; boundary=xalicex; charset=utf-8');
-
-    $res->{msgs} = [];
-    # send the nicks in the initial load
-    $res->{actions} = [ map {$_->nicks_action} $self->app->windows ];
-    
-    my $remote_time = $req->uri->query_param('t') || $local_time;
-
-    $res->{offset} = $local_time - $remote_time;
-    $res->{last_send} = 0;
-    $self->log_debug("opening a streaming http connection ("
-                     . $res->{offset} . " offset)");
-
-    # populate the msg queue with any buffered messages
-    if (defined (my $msgid = $req->uri->query_param('msgid'))) {
-      $res->{msgs} = $self->app->buffered_messages($msgid);
+  if (my $auth  = $req->headers->{authorization}) {
+    $auth =~ s/^Basic //;
+    $auth = decode_base64($auth);
+    my ($user,$password)  = split(/:/, $auth);
+    if ($self->config->auth->{username} eq $user &&
+        $self->config->auth->{password} eq $password) {
+      $req->respond([200,'ok']);
+      return;
     }
-    push @{$self->streams}, $res;
-    return RC_OK;
-  }
-
-  method handle_stream ($req, $res) {
-    return $self->end_stream($res) if $res->is_error;
-    return if $res->{delayed};
-    
-    if (@{$res->{msgs}} or @{$res->{actions}}) {
-      my $diff = time - $res->{last_send};
-      if ($diff < 0.1 and !$res->{resend_id}) {
-        $res->{delayed} = 1;
-        $self->call("delay_resend", $req, $res, 0.1 - $diff);
-        return;
-      }
-      
-      use bytes;
-      my $output;
-      if (! $res->{started}) {
-        $res->{started} = 1;
-        $output .= $self->seperator."\n";
-      }
-      $output .= to_json({msgs => $res->{msgs}, actions => $res->{actions},
-                          time => time - $res->{offset}});
-      $output .= " " x (1024 - bytes::length $output) if bytes::length $output < 1024;
-      $res->send("$output\n" . $self->seperator . "\n");
-      return $self->end_stream($res) if $res->is_error;
-
-      $res->{msgs} = [];
-      $res->{actions} = [];
-      $res->{last_send} = time;
-      no bytes;
+    else {
+      $self->log_debug("auth failed");
     }
-    
-    POE::Kernel->alarm_remove($res->{resend_id}) if $res->{resend_id};
-    $res->{resend_id} = undef;
   }
+  $req->respond([401, 'unauthorized', {'WWW-Authenticate' => 'Basic realm="Alice"'}]);
+}
 
-  method end_stream ($res) {
-    $self->log_debug("closing a streaming http connection");
-    for (0 .. scalar @{$self->streams} - 1) {
-      if (! $self->streams->[$_] or ($res and $res == $self->streams->[$_])) {
-        splice(@{$self->streams}, $_, 1);
-      }
-    }
-    $res->close;
-    $res->continue;
-  }
+sub setup_stream {
+  my ($self, $httpd, $req) = @_;
+  $self->log_debug("opening new stream");
+  my $msgid = $req->parm('msgid') || 0;
+  $self->add_stream(
+    App::Alice::Stream->new(
+      actions => [ map {$_->nicks_action} $self->app->windows ],
+      msgs    => $self->app->buffered_messages($msgid),
+      request => $req,
+    )
+  );
+}
 
+sub purge_disconnects {
+  my ($self, $host, $port) = @_;
+  $self->streams([
+    grep {!$_->disconnected} $self->streams
+  ]);
+}
 
-  method handle_message ($req, $res) {
-    my $msg  = $req->uri->query_param('msg');
-    my $source = $req->uri->query_param('source');
-    my $window = $self->app->get_window($source);
-    return unless $window;
+sub handle_message {
+  my ($self, $httpd, $req) = @_;
+  my $msg  = $req->parm('msg');
+  my $source = $req->parm('source');
+  my $window = $self->app->get_window($source);
+  if ($window) {
     for (split /\n/, $msg) {
       eval {$self->app->dispatch($_, $window) if length $_};
       if ($@) {$self->log_debug($@)}
     }
-    return RC_OK;
   }
+  $req->respond([200,'ok',{'Content-Type' => 'text/plain'}, 'ok']);
+}
 
-  method handle_static ($req, $res) {
-    my $file = $req->uri->path;
-    my ($ext) = ($file =~ /[^\.]\.(.+)$/);
-    if (-e $self->config->assetdir . "/$file") {
-      open my $fh, '<', $self->config->assetdir . "/$file";
-      given ($ext) {
-        when (/^(?:png|gif|jpg|jpeg)$/i) {
-          $res->content_type("image/$ext"); 
-        }
-        when (/^js$/) {
-          $res->header("Cache-control" => "no-cache");
-          $res->content_type("text/javascript");
-        }
-        when (/^css$/) {
-          $res->header("Cache-control" => "no-cache");
-          $res->content_type("text/css");
-        }
-        default {
-          return $self->not_found($req, $res);
-        }
-      }
-      my @file = <$fh>;
-      $res->content(join "", @file);
-      return RC_OK;
+sub handle_static {
+  my ($self, $httpd, $req) = @_;
+  my $file = $req->url;
+  my ($ext) = ($file =~ /[^\.]\.(.+)$/);
+  my $headers;
+  if (-e $self->config->assetdir . "/$file") {
+    open my $fh, '<', $self->config->assetdir . "/$file";
+    if ($ext =~ /^(?:png|gif|jpg|jpeg)$/i) {
+      $headers = {"Content-Type" => "image/$ext"};
     }
-    return $self->not_found($req, $res);
-  }
-
-  method send_index ($req, $res) {
-    $self->log_debug("serving index");
-    $res->content_type('text/html; charset=utf-8');
-    my $output = '';
-    my $channels = [];
-    for my $window ($self->sorted_windows) {
-      push @$channels, {
-        window  => $window->serialized(encoded => 1),
-        topic   => $window->topic,
-      }
+    elsif ($ext =~ /^js$/) {
+      $headers = {
+        "Cache-control" => "no-cache",
+        "Content-Type" => "text/javascript",
+      };
     }
-    $self->tt->process('index.tt', {
-      windows => $channels,
-      style   => $self->config->style  || "default",
-      images  => $self->config->images,
-      monospace_nicks => $self->config->monospace_nicks,
-    }, \$output) or die $!;
-    $res->content($output);
-    return RC_OK;
-  }
-  
-  method sorted_windows {
-    my %order;
-    if ($self->config->order) {
-      %order = map {$self->config->order->[$_] => $_}
-               0 .. @{$self->config->order} - 1;
+    elsif ($ext =~ /^css$/) {
+      $headers = {
+        "Cache-control" => "no-cache",
+        "Content-Type" => "text/css",
+      };
     }
-    $order{info} = "##";
-    sort {
-      my ($c, $d) = ($a->title, $b->title);
-      $c =~ s/^#//;
-      $d =~ s/^#//;
-      $c = $order{$a->title} . $c if exists $order{$a->title};
-      $d = $order{$b->title} . $d if exists $order{$b->title};
-      $c cmp $d;
-    } $self->app->windows
+    else {
+      return $self->not_found($req);
+    }
+    my @file = <$fh>;
+    $req->respond([200, 'ok', $headers, join("", @file)]);
+    return;
   }
+  $self->not_found($req);
+}
 
-  method send_config ($req, $res) {
-    $self->log_debug("serving config");
-    $res->header("Cache-control" => "no-cache");
-    my $output = '';
-    $self->tt->process('config.tt', {
-      style       => $self->config->style || "default",
-      config      => $self->config->serialized,
-      connections => [ sort {$a->session_alias cmp $b->session_alias}
-                       $self->app->connections ],
-    }, \$output);
-    $res->content($output);
-    return RC_OK;
-  }
+sub send_index {
+  my ($self, $httpd, $req) = @_;
+  my $channels = [];
+  my $output = $self->app->render('index');
+  $req->respond([200, 'ok', {'Content-Type' => 'text/html; charset=utf-8'}, $output]);
+}
 
-  method server_config ($req, $res) {
-    $self->log_debug("serving blank server config");
-    $res->header("Cache-control" => "no-cache");
-    my $name = $req->uri->query_param('name');
-    $self->log_debug($name);
-    my $config = '';
-    $self->tt->process('server_config.tt', {name => $name}, \$config);
-    my $listitem = '';
-    $self->tt->process('server_listitem.tt', {name => $name}, \$listitem);
-    $res->content(to_json({config => $config, listitem => $listitem}));
-    return RC_OK;
-  }
 
-  method save_config ($req, $res) {
-    $self->log_debug("saving config");
-    my $new_config = {};
-    for my $name ($req->uri->query_param) {
-      next unless $req->uri->query_param($name);
-      if ($name =~ /^(.+?)_(.+)/) {
-        if ($2 eq "channels" or $2 eq "on_connect") {
-          $new_config->{$1}{$2} = [$req->uri->query_param($name)];
+sub send_config {
+  my ($self, $httpd, $req) = @_;
+  $self->log_debug("serving config");
+  my $output = $self->app->render('config');
+  $req->respond([200, 'ok', {}, $output]);
+}
+
+sub server_config {
+  my ($self, $httpd, $req) = @_;
+  $self->log_debug("serving blank server config");
+  my $name = $req->parm('name');
+  my $config = $self->app->render('server_config', $name);
+  my $listitem = $self->app->render('server_listitem', $name);
+  $req->respond([200, 'ok', {"Cache-control" => "no-cache"}, 
+                to_json({config => $config, listitem => $listitem})]);
+}
+
+sub save_config {
+  my ($self, $httpd, $req) = @_;
+  $self->log_debug("saving config");
+  my $new_config = {};
+  my %params = $req->vars;
+  for my $name (keys %params) {
+    next unless $params{$name};
+    if ($name =~ /^(.+?)_(.+)/) {
+      if ($2 eq "channels" or $2 eq "on_connect") {
+        if (ref $params{$name} eq "ARRAY") {
+          $new_config->{servers}{$1}{$2} = $params{$name};
         }
         else {
-          $new_config->{$1}{$2} = $req->uri->query_param($name);
+          $new_config->{servers}{$1}{$2} = [$params{$name}];
         }
       }
-    }
-    $self->config->merge($new_config);
-    $self->config->write;
-    return RC_OK;
-  }
-  
-  method tab_order ($req, $res) {
-    $self->log_debug("updating tab order");
-    $self->app->tab_order([$req->uri->query_param("tabs")]);
-    return RC_OK;
-  }
-
-  method not_found ($req, $res) {
-    $self->log_debug("serving 404: ", $req->uri->path);
-    $res->code(404);
-    return RC_OK;
-  }
-
-  method has_clients {
-    return scalar @{$self->streams} > 0;
-  }
-
-  sub log_debug {
-    my $self = shift;
-    say STDERR join " ", @_ if $self->config->debug;
-  }
-
-  sub log_info {
-    say STDERR join " ", @_;
-  } 
-  
-  for my $method (qw/send_config save_config tab_order send_index setup_stream
-                  not_found handle_message handle_static server_config/) {
-    Moose::Util::add_method_modifier(__PACKAGE__, "before", [$method, sub {
-      $_[1]->header(Connection => 'close');
-      $_[2]->header(Connection => 'close');
-      $_[2]->streaming(0);
-      $_[2]->code(200);
-    }]);
-    next if $method eq "setup_stream";
-    Moose::Util::add_method_modifier(__PACKAGE__, "after", [$method, sub {
-      my $accepts = $_[1]->header('Accept-Encoding');
-      if ($accepts and $accepts =~ /gzip/) {
-        my $content = Compress::Zlib::memGzip($_[2]->content);
-        $_[2]->header('Content-Encoding' => 'gzip');
-        $_[2]->content($content)
+      else {
+        $new_config->{servers}{$1}{$2} = $params{$name};
       }
-    }]);
+    }
+    else {
+      $new_config->{$name} = $params{$name};
+    }
   }
+  $self->config->merge($new_config);
+  $self->config->write;
+  $req->respond([200, 'ok'])
 }
+
+sub tab_order  {
+  my ($self, $httpd, $req) = @_;
+  $self->log_debug("updating tab order");
+  my %vars = $req->vars;
+  $self->app->tab_order([
+    grep {defined $_} @{$vars{tabs}}
+  ]);
+  $req->respond([200,'ok']);
+}
+
+sub not_found  {
+  my ($self, $req) = @_;
+  $req->respond([404,'not found']);
+}
+
+sub log_debug {
+  my $self = shift;
+  print STDERR join " ", @_ if $self->config->debug;
+  print "\n";
+}
+
+sub log_info {
+  print STDERR join " ", @_;
+  print STDERR "\n";
+}
+
+__PACKAGE__->meta->make_immutable;
+1;

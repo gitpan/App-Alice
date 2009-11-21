@@ -1,0 +1,45 @@
+? my @windows = $_[0]->sorted_windows;
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><?= $windows[1]->title . " " . $windows[1]->topic->{string} ?></title>
+    <script type="text/javascript" src="/static/alice.js"></script>
+    <script type="text/javascript" src="/static/site.js?images=<?= $_[0]->config->images || 'show' ?>&amp;monospace_nicks=<?= join ",", @{$_[0]->config->monospace_nicks} ?>"></script>
+    <link type="text/css" rel="stylesheet" href="/static/site.css" />
+    <!--[if !IE]>--> 
+    <link rel="stylesheet" href="/static/iphone.css" type="text/css" 
+          media="only screen and (max-device-width: 480px)" /> 
+    <!--<![endif]-->
+    <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+  </head>
+  <body>
+    <div id="container">
+      <ul id="controls">
+        <li id="config_button"><img src="/static/image/config.png" /></li>
+        <li id="status" class="disabled"></li>
+      </ul>
+      <ul id="tabs">
+? for (0 .. @windows - 1) {
+?   my $window = $windows[$_];
+?   my @classes = ();
+?   if (@windows > 1) {
+?     push @classes, "active" if $_ == 1;
+?     push @classes, "leftof_active" if $_ == 0;
+?   }
+?=  $_mt->render_file('tab.html', $_[0], $window, @classes)
+? }
+      </ul>
+      <div id="windows">
+? for (0 .. @windows - 1) {
+?   my $window = $windows[$_];
+?   my @classes = ();
+?   if (@windows > 1) {
+?     push @classes, "active" if $_ == 1;
+?     push @classes, "leftof_active" if $_ == 0;
+?   }
+?=  $_mt->render_file('window.html', $_[0], $window, @classes)
+? }
+      </div>
+    </div>
+  </body>
+</html>

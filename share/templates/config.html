@@ -1,0 +1,172 @@
+? my $app = shift;
+? my @connections = $app->connections;
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Alice</title>
+    <script type="text/javascript" src="/static/alice.js"></script>
+    <link type="text/css" rel="stylesheet" href="/static/site.css" />
+    <link type="text/css" rel="stylesheet" href="/static/config.css" />
+    <!--[if !IE]>--> 
+    <link rel="stylesheet" href="/static/styles/iphone.css" type="text/css" 
+          media="only screen and (max-device-width: 480px)" /> 
+    <!--<![endif]-->
+    <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+  </head>
+	<body class="config">
+		<div id="config">
+		  <script type="text/javascript">
+			    showConnection = function (alias) {
+			      $$("div#config .active").invoke("removeClassName","active");
+			      $("setting_" + alias).addClassName("active");
+			      $("menu_" + alias).addClassName("active");
+			    }
+			    addChannel  = function (alias) {
+			      var channel = prompt("Please enter a channel name.");
+			      if (channel)
+			        $("channels_" + alias).insert("<option value=\""+channel+"\">"+channel+"</option>");
+			      return false;
+			    };
+			    addCommand  = function (alias) {
+			      var command = prompt("Please enter a channel name.");
+			      if (command)
+			        $("on_connect_" + alias).insert("<option value=\""+command+"\">"+command+"</option>");
+			      return false;
+			    };
+			    removeCommands = function (alias) {
+			      $A($("on_connect_" + alias).options).each(function (option) {
+			        if (option.selected) option.remove()});
+			      return false;
+			    };
+			    removeChannels = function (alias) {
+			      $A($("channels_" + alias).options).each(function (option) {
+			        if (option.selected) option.remove()});
+			      return false;
+			    };
+			    addServer = function () {
+			      var name = prompt("Please enter a name for this server.");
+			      if (! name) return;
+			      // TODO: test if this server is already being used ...
+			      new Ajax.Request("/serverconfig", {
+			        parameters: {name: name},
+			        method: 'get',
+			        onSuccess: function (trans) {
+			          var data = trans.responseText.evalJSON();
+			          $$('#config_data div.setting').invoke('removeClassName',"active");
+			          $$('#connections li').invoke('removeClassName',"active");
+			          $('config_data').insert(data.config);
+			          $('connections').insert(data.listitem);
+			        }
+			      })
+			    };
+			    
+			    submitConfig = function(form) {
+            $$('#config .channelselect').each(function(select) {
+              $A(select.options).each(function(option) {
+                option.selected = true;
+              });
+            });
+            new Ajax.Request('/save', {
+              method: 'get',
+              parameters: form.serialize(),
+              onSuccess: function () {window.close()}
+            });
+            return false;
+          },
+		  </script>
+  
+		  <ul id="connections">
+		    <li class="header">Connections</li>
+		    <? for my $index (0 .. @connections - 1) { ?>
+		      <? my $connection = $connections[$index]; ?>
+		      <? my $alias = $connection->alias; ?>
+		    <li class="<?= $connection->cl->registered ? "connected" : "disconnected" ?> <? if ($index == 0) {?> active<?}?>"
+		        onclick="showConnection('<?= $alias ?>')" id="menu_<?= $alias ?>">
+		      <?= $alias ?>
+		    </li>
+		    <? } ?>
+		  </ul>
+		  <div class="controls" id="server_controls">
+		     <a href="#" onclick="return addServer()">Add</a>
+		     <a href="#" onclick="return removeServer()">Remove</a>
+		  </div>
+  
+		  <form id="config_data" onsubmit="return submitConfig(this)">
+		  <? for my $index (0 .. @connections - 1) { ?>
+		    <? my $connection = $connections[$index]; ?>
+		    <? my $alias = $connection->alias; ?>
+		  <div class="setting<? if ($index == 0) {?> active<?}?>" id="setting_<?= $alias ?>">
+		    <div class="field" style="width:138px">
+		      <label>Name</label>
+		      <span><?= $alias ?></span>
+		      <input type="hidden" name="<?= $alias ?>_name" value="<?= $alias ?>" />
+		    </div>
+		    <div class="field" style="width:138px">
+		      <label>Status</label>
+		      <? my $status = $connection->cl->registered ? "connected" : "disconnected" ?>
+		      <span class="<?= $status ?>"><?= $status ?></span>
+		      </div>
+		    <div class="field clear">
+		      <label>Server address</label>
+		      <input type="text" name="<?= $alias ?>_host" value="<?= $connection->config->{host} ?>" size="15"/>
+		    </div>
+		    <div class="field">
+		      <label>Port</label>
+		      <input type="text" name="<?= $alias ?>_port" value="<?= $connection->config->{port} ?>" size="6" style="float:left"/>
+		      <div style="float:left">
+		      <input type="checkbox" name="<?= $alias ?>_ssl"<? if ($connection->config->{ssl}) { ?> checked="checked"<? } ?> style="display:inline;margin-right:0px"/>
+		      <span style="font-size:0.7em">SSL</span>
+		      </div>
+		    </div>
+		    <div class="field clear">
+		      <label>Nick</label>
+		      <input type="text" name="<?= $alias ?>_nick" value="<?= $connection->config->{nick} ?>" size="15" />
+		    </div>
+		    <div class="field">
+		      <label>Ircname</label>
+		      <input type="text" name="<?= $alias ?>_ircname" value="<?= $connection->config->{ircname} ?>" size="15" />
+		    </div>
+		    <div class="field clear">
+		      <label>Username</label>
+		      <input type="text" name="<?= $alias ?>_username" value="<?= $connection->config->{username} ?>" size="15" />
+		    </div>
+		    <div class="field">
+		      <label>Password</label>
+		      <input type="text" name="<?= $alias ?>_password" value="<?= $connection->config->{password} ?>" size="15" />
+		    </div>
+		    <div class="field clear">
+		      <label>Channels
+		        <span style="font-size:0.8em">(e.g. <span style="font-family:monospace;font-size:1em">#alice</span>)</span>
+		      </label>
+		      <select name="<?= $alias ?>_channels" multiple="multiple" id="channels_<?= $alias ?>" class="channelselect">
+		        <? for my $channel (@{$connection->config->{channels}}) { ?>
+		        <option value="<?= $channel ?>"><?= $channel ?></option>
+		        <? } ?>
+		      </select>
+		      <div class="controls">
+		        <a href="#" onclick="return addChannel('<?= $alias ?>')">New</a>
+		        <a href="#" onclick="return removeChannels('<?= $alias ?>')">Remove</a>
+		      </div>
+		    </div>
+		    <div class="field">
+		      <label>Commands</label>
+		      <select name="<?= $alias ?>_on_connect" multiple="multiple" id="on_connect_<?= $alias ?>" class="channelselect">
+		        <? for my $command (@{ $connection->config->{on_connect} }) { ?>
+		        <option value="<?= $command ?>"><?= $command ?></option>
+		        <? } ?>
+		      </select>
+		      <div class="controls">
+		        <a href="#" onclick="return addCommand('<?= $alias ?>')">New</a>
+		        <a href="#" onclick="return removeCommands('<?= $alias ?>')">Remove</a>
+		      </div>
+		    </div>
+		  </div>  
+		  <? } ?>
+		  <div id="buttons">
+		    <button onclick="window.close(); return false;">Cancel</button>
+		    <button type="submit">Save</button>
+		  </div>
+		  </form>
+		</div>
+	</body>
+</html>

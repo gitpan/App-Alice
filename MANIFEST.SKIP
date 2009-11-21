@@ -48,6 +48,10 @@
 \bextlib.*
 
 # Avoid archives of this distribution
-\bshare/sprockets
+\bshare/sprockets.*
+\balice.app.*
+\bAlice.app.*
+Sprockets.*
+TODO
 App-Alice
 README.md
