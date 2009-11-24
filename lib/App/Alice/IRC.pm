@@ -18,6 +18,16 @@ has 'alias' => (
   required => 1,
 );
 
+has 'nick_cached' => (
+  isa      => 'Str',
+  is       => 'rw',
+  lazy     => 1,
+  default  => sub {
+    my $self = shift;
+    return $self->config->{nick};
+  },
+);
+
 has 'config' => (
   isa      => 'HashRef',
   is       => 'rw',
@@ -36,6 +46,17 @@ has 'app' => (
 
 has 'reconnect_timer' => (
   is => 'rw'
+);
+
+has 'reconnect_count' => (
+  traits => ['Counter'],
+  is  => 'rw',
+  isa => 'Int',
+  default   => 0,
+  handles   => {
+    increase_reconnect_count => 'inc',
+    reset_reconnect_count => 'reset',
+  },
 );
 
 has [qw/is_connected disabled removed/] => (
@@ -99,7 +120,12 @@ sub window {
 
 sub nick {
   my $self = shift;
-  return $self->cl->nick;
+  my $nick = $self->cl->nick;
+  if ($nick and $nick ne "") {
+    $self->nick_cached($nick);
+    return $nick;
+  }
+  return $self->nick_cached;
 }
 
 sub windows {
@@ -110,7 +136,19 @@ sub windows {
 sub connect {
   my $self = shift;
   $self->disabled(0);
-  $self->app->send([$self->log_info("connecting")]);
+  $self->increase_reconnect_count;
+  if (!$self->config->{host} or !$self->config->{port}) {
+    $self->app->send([$self->log_info("can't connect: missing either host or port")]);
+    return;
+  }
+  if ($self->reconnect_count > 1) {
+    $self->app->send([
+      $self->log_info("reconnecting: attempt " . $self->reconnect_count),
+    ]);
+  }
+  else {
+    $self->app->send([$self->log_info("connecting")]);
+  }
   $self->cl->connect(
     $self->config->{host}, $self->config->{port},
     {
@@ -123,26 +161,37 @@ sub connect {
 }
 
 sub connected {
-  my ($self, $cl, $con, $err) = @_;
+  my ($self, $cl, $err) = @_;
+  $self->log_info("connected");
   if (defined $err) {
     $self->app->send([
       $self->log_info("connect error: $err")
     ]);
-    $self->reconnect;
+    $self->reconnect(60);
   }
   else {
+    $self->reset_reconnect_count;
     $self->is_connected(1);
+    $self->cl->register(
+      $self->config->{nick},
+      $self->config->{username},
+      $self->config->{ircname},
+      $self->config->{password},
+    );
   }
 }
 
 sub reconnect {
-  my $self = shift;
-  $self->app->send([$self->log_info("reconnecting in 10 seconds")]);
+  my ($self, $time) = @_;
+  if ($self->reconnect_count > 4) {
+    $self->app->send([$self->log_info("too many failed reconnects, giving up")]);
+    return;
+  }
+  $time = 60 unless $time >= 0;
+  $self->app->send([$self->log_info("reconnecting in $time seconds")]);
   $self->reconnect_timer(
-    AnyEvent->timer(after => 10, cb => sub {
-      unless ($self->is_connected) {
-        $self->connect;
-      }
+    AnyEvent->timer(after => $time, cb => sub {
+      $self->connect unless $self->is_connected;
     })
   );
 }
@@ -151,10 +200,10 @@ sub registered {
   my $self = shift;
   my @log;
   $self->cl->enable_ping (60, sub {
+    $self->is_connected(0);
     $self->app->send([$self->log_info("ping timeout")]);
-    $self->reconnect;
+    $self->reconnect(0);
   });
-  push @log, $self->log_info("connected");
   for (@{$self->config->{on_connect}}) {
     push @log, $self->log_info("sending $_");
     $self->cl->send_raw($_);
@@ -169,9 +218,11 @@ sub registered {
 
 sub disconnected {
   my ($self, $cl, $reason) = @_;
+  return if $reason eq "reconnect requested.";
+  $reason = "" unless $reason;
   $self->app->send([$self->log_info("disconnected: $reason")]);
   $self->is_connected(0);
-  $self->reconnect unless $self->disabled;
+  $self->reconnect(0) unless $self->disabled;
   if ($self->removed) {
     delete $self->app->ircs->{$self->alias};
     $self = undef;
@@ -181,7 +232,12 @@ sub disconnected {
 sub disconnect {
   my $self = shift;
   $self->disabled(1);
-  $self->cl->send_srv("QUIT" => $self->app->config->quitmsg);
+  if ($self->is_connected) {
+    $self->cl->send_srv("QUIT" => $self->app->config->quitmsg);
+  }
+  else {
+    $self->cl->disconnect;
+  }
 }
 
 sub remove {
@@ -201,8 +257,9 @@ sub publicmsg {
 sub privatemsg {
   my ($self, $cl, $nick, $msg) = @_;
   if ($msg->{command} eq "PRIVMSG") {
-    my $window = $self->window($nick);
-    $self->app->send([$window->format_message($nick, $msg->{params}[1])]); 
+    my $from = (split /!/, $msg->{prefix})[0];
+    my $window = $self->window($from);
+    $self->app->send([$window->format_message($from, $msg->{params}[1])]); 
   }
   elsif ($msg->{command} eq "NOTICE") {
     $self->app->send([$self->log_info($msg->{params}[1])]);
@@ -268,6 +325,7 @@ sub part {
 
 sub channel_remove {
   my ($self, $cl, $msg, $channel, @nicks) = @_;
+  return unless @nicks;
   return if grep {$_ eq $self->nick} @nicks;
   my $window = $self->window($channel);
   $self->remove_nicks(@nicks);
@@ -374,7 +432,7 @@ sub whois_table {
   my ($self, $nick) = @_;
   my $info = $self->get_nick_info($nick);
   return "No info for user \"$nick\"" if !$info;
-  return "real: $info->{real}\nserver: $info->{server}\nchannels: " .
+  return "real: $info->{real}\nhost: $info->{IP}\nserver: $info->{server}\nchannels: " .
          join " ", keys %{$info->{channels}};
 }
 

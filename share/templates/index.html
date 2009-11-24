@@ -3,7 +3,7 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title><?= $titlewin->title . " " . $titlewin->topic->{string} ?></title>
+    <title><?= $titlewin->title ?></title>
     <script type="text/javascript" src="/static/alice.js"></script>
     <script type="text/javascript" src="/static/site.js?images=<?= $_[0]->config->images || 'show' ?>&amp;monospace_nicks=<?= join ",", @{$_[0]->config->monospace_nicks} ?>"></script>
     <link type="text/css" rel="stylesheet" href="/static/site.css" />
@@ -16,7 +16,13 @@
   <body>
     <div id="container">
       <ul id="controls">
-        <li id="config_button"><img src="/static/image/config.png" /></li>
+        <li id="config_button">
+          <img src="/static/image/config.png" />
+          <select id="config_overlay">
+            <option>Preferences</option>
+            <option>Connections</option>
+          </select>
+        </li>
         <li id="status" class="disabled"></li>
       </ul>
       <ul id="tabs">

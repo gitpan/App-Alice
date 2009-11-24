@@ -11,7 +11,7 @@ use App::Alice::Signal;
 use App::Alice::Config;
 use Moose;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 has cond => (
   is       => 'rw',
@@ -21,13 +21,26 @@ has cond => (
 has config => (
   is       => 'ro',
   isa      => 'App::Alice::Config',
-  default  => sub {App::Alice::Config->new},
+);
+
+has msgid => (
+  traits    => ['Counter'],
+  is        => 'rw',
+  isa       => 'Int',
+  default   => 1,
+  handles   => {next_msgid => 'inc'}
 );
 
 has ircs => (
   is      => 'ro',
   isa     => 'HashRef',
   default => sub {{}},
+);
+
+has standalone => (
+  is      => 'ro',
+  isa     => 'Bool',
+  default => 1,
 );
 
 has httpd => (
@@ -112,10 +125,21 @@ has 'info_window' => (
   }
 );
 
+sub BUILDARGS {
+  my ($class, %options) = @_;
+  my $standalone = 1;
+  if (exists $options{standalone}) {
+    $standalone = $options{standalone};
+    delete $options{standalone};
+  }
+  return {
+    standalone => $standalone,
+    config => App::Alice::Config->new(%options),
+  };
+}
+
 sub run {
   my $self = shift;
-  $self->cond(AnyEvent->condvar);
-  
   # initialize template and httpd because they are lazy
   $self->info_window;
   $self->template;
@@ -124,26 +148,29 @@ sub run {
   $self->add_irc_server($_, $self->config->servers->{$_})
     for keys %{$self->config->servers};
 
-  say STDERR "Location: http://localhost:". $self->config->port ."/view";
   
-  my @sigs;
-  for my $sig (qw/INT QUIT/) {
-    my $w = AnyEvent->signal(
-      signal => $sig,
-      cb     => sub {App::Alice::Signal->new(app => $self, type => $sig)}
+  if ($self->standalone) { 
+    $self->cond(AnyEvent->condvar);
+    say STDERR "Location: http://localhost:". $self->config->port ."/view";
+    my @sigs;
+    for my $sig (qw/INT QUIT/) {
+      my $w = AnyEvent->signal(
+        signal => $sig,
+        cb     => sub {App::Alice::Signal->new(app => $self, type => $sig)}
+      );
+      push @sigs, $w;
+    }
+
+    $self->cond->wait;
+    print STDERR "Disconnecting, please wait\n";
+    $self->httpd->ping_timer(undef);
+    $_->disconnect('alice') for $self->connections;
+    my $timer = AnyEvent->timer(
+      after => 3,
+      cb    => sub{exit(0)}
     );
-    push @sigs, $w;
+    AnyEvent->condvar->wait;
   }
-  
-  $self->cond->wait;
-  print STDERR "Disconnecting, please wait\n";
-  $self->httpd->ping_timer(undef);
-  $_->disconnect('alice') for $self->connections;
-  my $timer = AnyEvent->timer(
-    after => 3,
-    cb    => sub{exit(0)}
-  );
-  AnyEvent->condvar->wait;
 }
 
 sub dispatch {
@@ -179,11 +206,9 @@ sub tab_order {
 
 sub buffered_messages {
   my ($self, $min) = @_;
-  my $max = 0;
-  return [ map {$_->{buffered} = 1; $_;}
-           grep {$_->{msgid} > $min or $min > $max}
-           map {$max = $_->msgid; @{$_->msgbuffer}} $self->windows
-         ];
+  return map {$_->{buffered} = 1; $_;}
+         grep {$_->{msgid} > $min or $min > $self->msgid}
+         map {@{$_->msgbuffer}} $self->windows;
 }
 
 sub connections {
@@ -212,7 +237,7 @@ sub find_or_create_window {
     irc      => $connection,
     assetdir => $self->config->assetdir,
     app      => $self,
-  );  
+  );
   $self->add_window($id, $window);
 }
 
@@ -298,7 +323,7 @@ sub format_notice {
     event     => $event,
     nick      => $nick,
     body      => $body,
-    msgid     => App::Alice::Window->next_msgid,
+    msgid     => $self->next_msgid,
   };
   $message->{full_html} = $self->render('event',$message);
   $message->{event} = "notice";

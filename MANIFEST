@@ -1,5 +1,6 @@
 bin/alice
 bin/client
+bin/manager
 Changes
 inc/Module/Install.pm
 inc/Module/Install/Base.pm
@@ -27,7 +28,10 @@ Makefile.PL
 MANIFEST			This list of files
 MANIFEST.SKIP
 META.yml
+README
+share/proxy.psgi
 share/static/alice.js
+share/static/favicon.ico
 share/static/image/aquaTabClose.png
 share/static/image/background-self.png
 share/static/image/background.png

@@ -3,7 +3,7 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Alice</title>
+    <title>Connections</title>
     <script type="text/javascript" src="/static/alice.js"></script>
     <link type="text/css" rel="stylesheet" href="/static/site.css" />
     <link type="text/css" rel="stylesheet" href="/static/config.css" />
@@ -152,6 +152,7 @@
 		    </div>
 		    <div class="field">
 		      <label>Ircname</label>
+		      <img src="<?= $connection->nick_avatar($connection->nick) ?>" />
 		      <input type="text" name="<?= $alias ?>_ircname" value="<?= $connection->config->{ircname} || ""?>" size="15" />
 		    </div>
 		    <div class="field clear">

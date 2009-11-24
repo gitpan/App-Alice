@@ -7327,10 +7327,6 @@ Alice.Application = Class.create({
     }
   },
 
-  handleActions: function(list) {
-    list.each(this.handleAction, this);
-  },
-
   handleAction: function(action) {
     switch (action.event) {
       case "join":
@@ -7358,10 +7354,6 @@ Alice.Application = Class.create({
       default:
         break;
     }
-  },
-
-  displayMessages: function(list) {
-    list.each(this.displayMessage, this);
   },
 
   displayMessage: function(message) {
@@ -7437,10 +7429,15 @@ Alice.Connection = Class.create({
     data = data.slice(start, end);
     try {
       data = data.evalJSON();
-      if (data.msgs.length)
-        this.msgid = data.msgs[data.msgs.length - 1].msgid;
-      this.application.handleActions(data.actions);
-      this.application.displayMessages(data.msgs);
+      var queue = data.queue;
+      var length = queue.length;
+      if (length) this.msgid = queue[length - 1].msgid;
+      for (var i=0; i<length; i++) {
+        if (queue[i].type == "action")
+          this.application.handleAction(queue[i]);
+        else if (queue[i].type == "message")
+          this.application.displayMessage(queue[i]);
+      }
     }
     catch (e) {
       console.log(e);
@@ -7590,7 +7587,7 @@ Alice.Window = Class.create({
   },
 
   focus: function(event) {
-    document.title = this.title + " " + this.topic.innerHTML.stripTags().unescapeHTML();
+    document.title = this.title;
     if (this.application.activeWindow()) this.application.activeWindow().unFocus();
     this.active = true;
     this.tab.addClassName('active');
@@ -7620,7 +7617,7 @@ Alice.Window = Class.create({
 
   addMessage: function(message) {
     if (message.html || message.full_html) {
-      if (message.nick && message.nick == this.lastNick) {
+      if (message.event == "say" && message.nick && message.nick == this.lastNick) {
         if (this.application.messagesAreMonospacedFor(message.nick) || message.monospaced)
           this.messages.down('li:last-child div.msg').insert(
             "<br>" + this.application.applyFilters(message.html));

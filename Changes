@@ -1,3 +1,7 @@
+0.04  Tue 24 Nov 2009
+        - Removed MooseX::ClassAttribute dependency
+        - Added reconnect retry counter
+
 0.03  Sat 21 Nov 2009
         - Fixed a number of issues with reconnecting
         - Fixed issue adding new server from config window
