@@ -16,7 +16,7 @@ body {
 }
 
 ul#tabs {
-  z-index: 20
+  z-index: 20;
 }
 
 ul#tabs li:hover {
@@ -25,17 +25,14 @@ ul#tabs li:hover {
 
 ul#controls {
   z-index: 30;
+  background: #ddd;
 }
 
 ul#controls li {
   position: relative;
 }
 
-ul#controls li.disabled {
-  display: none;
-}
-
-select#config_overlay {
+select.select_overlay {
   display: block;
   position: absolute;
   top: 0px;
@@ -47,6 +44,10 @@ select#config_overlay {
   margin: 0;
   opacity: 0;
   font-size: 12px;
+}
+
+select#tab_overflow_overlay option.unread {
+  font-weight: bold;
 }
 
 body {
@@ -105,8 +106,8 @@ ul#tabs {
   position: fixed;
   bottom: 0;
   left: 0;
+  right: 62px;
   height: 23px;
-  width: 100%;
   font-size: 11px;
   background: #ddd;
 }
@@ -156,10 +157,10 @@ ul#tabs li.leftof_active {
 ul#controls {
   position: fixed;
   bottom: 0px;
-  right: 18px;
-  height: 22px;
+  right: 0px;
+  height: 23px;
   margin: 0;
-  padding: 0;
+  padding: 0 18px 0 0;
   list-style: none;
 }
 
@@ -169,7 +170,7 @@ ul#controls li {
   padding: 0;
   height: 16px;
   width: 16px;
-  padding: 3px;
+  padding: 4px 3px 3px 3px;
   cursor: pointer;
 }
 
@@ -376,7 +377,6 @@ ul#tabs li.active div.tab_button:hover {
   background: url(image/aquaTabClose.png) no-repeat center;
 }
 
-
 ul#tabs li.unread.channel_tab div.tab_button {
   background: url(image/roomTabNewMessage.png);
 }
@@ -547,4 +547,50 @@ div#config ul#connections li.connected {
 
 body.config {
   background: #efefef;
+}
+
+div#logsearch {
+  background: #eee;
+  border-bottom: 1px solid #999;
+  position: fixed;
+  top: 0px;
+  left: 0px;
+  right: 0px;
+  height: 28px;
+  padding: 5px 0 0 0;
+}
+
+div#logsearch label {
+  font-size: 0.7em;
+  padding-right: 2px;
+  padding-left: 10px;
+  color: #666;
+}
+
+div#logsearch form {
+  display: block;
+  margin: 0;
+}
+
+ul#logresults {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: absolute;
+  top: 33px;
+  bottom: 0px;
+  left: 0px;
+  right: 0px;
+  overflow: auto;
+}
+
+ul#logresults li {
+  border-bottom: 1px solid #eee;
+  padding: 5px 10px;
+  font-size: 0.8em;
+}
+
+ul#logresults span.metadata {
+  font-size: 0.7em;
+  color: #666;
 }

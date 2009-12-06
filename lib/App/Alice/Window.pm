@@ -1,10 +1,9 @@
 package App::Alice::Window;
 
 use Encode;
-use Digest::CRC qw/crc16/;
 use Text::MicroTemplate qw/encoded_string/;
 use IRC::Formatting::HTML;
-use Moose;
+use Any::Moose;
 
 has type => (
   is      => 'ro',
@@ -58,7 +57,9 @@ has id => (
   is      => 'ro',
   isa     => 'Str',
   lazy    => 1,
-  default => sub {return "win_" . crc16(lc($_[0]->title . $_[0]->session))}
+  default => sub {
+    return App::Alice::_build_window_id($_[0]->title, $_[0]->session);
+  },
 );
 
 has session => (
@@ -122,10 +123,12 @@ sub join_action {
   my $action = {
     type      => "action",
     event     => "join",
+    nicks     => [ $self->all_nicks ],
     window    => $self->serialized,
   };
   $action->{html}{window} = $self->app->render("window", $self);
   $action->{html}{tab} = $self->app->render("tab", $self);
+  $action->{html}{select} = $self->app->render("select", $self);
   return $action;
 }
 
