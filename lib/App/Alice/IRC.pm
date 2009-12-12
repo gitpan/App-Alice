@@ -1,6 +1,5 @@
 package App::Alice::IRC;
 
-use Encode;
 use AnyEvent;
 use AnyEvent::IRC::Client;
 use Digest::MD5 qw/md5_hex/;
@@ -112,14 +111,12 @@ sub log_info {
 
 sub window {
   my ($self, $title) = @_;
-  $title = decode("utf8", $title, Encode::FB_QUIET);
   return $self->app->find_or_create_window(
            $title, $self);
 }
 
 sub find_window {
   my ($self, $title) = @_;
-  $title = decode("utf8", $title, Encode::FB_QUIET);
   return $self->app->find_window($title, $self);
 }
 
@@ -427,9 +424,10 @@ sub nick_avatar {
   my ($self, $nick) = @_;
   my $info = $self->get_nick_info($nick);
   if ($info and $info->{real}) {
-    if ($info->{real} =~ /[^<\S]+@[^>\S]+/) {
+    if ($info->{real} =~ /([^<\s]+@[^\s>]+)/) {
+      my $email = $1;
       return "//www.gravatar.com/avatar/"
-           . md5_hex($info->{real}) . "?s=32&amp;r=x";
+           . md5_hex($email) . "?s=32&amp;r=x";
     }
     elsif ($info->{real} =~ /^https?:(\/\/\S+(?:jpe?g|png|gif))/) {
       return $1;
