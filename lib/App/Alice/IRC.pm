@@ -7,7 +7,7 @@ use Any::Moose;
 
 has 'cl' => (
   is      => 'rw',
-  isa     => 'AnyEvent::IRC::Client',
+  isa     => 'AnyEvent::IRC::Client|App::Alice::Test::MockIRC',
   default => sub {AnyEvent::IRC::Client->new},
 );
 
@@ -80,7 +80,7 @@ sub BUILD {
   $self->cl->enable_ssl(1) if $self->config->{ssl};
   $self->disabled(1) unless $self->config->{autoconnect};
   $self->cl->reg_cb(
-    registered     => sub{$self->registered(@_)},
+    registered     => sub{$self->registered($_)},
     channel_add    => sub{$self->channel_add(@_)},
     channel_remove => sub{$self->channel_remove(@_)},
     channel_topic  => sub{$self->channel_topic(@_)},
@@ -92,27 +92,38 @@ sub BUILD {
     privatemsg     => sub{$self->privatemsg(@_)},
     connect        => sub{$self->connected(@_)},
     disconnect     => sub{$self->disconnected(@_)},
-    dcc_request    => sub{$self->dcc_request(@_)},
-    dcc_connected  => sub{$self->dcc_connected(@_)},
+    irc_001        => sub{$self->log_info($_[1]->{params}[-1])},
     irc_352        => sub{$self->irc_352(@_)}, # WHO info
     irc_366        => sub{$self->irc_366(@_)}, # end of NAMES
-    irc_372        => sub{$self->log_info($_[1]->{params}[1], 1)}, # MOTD info
-    irc_377        => sub{$self->log_info($_[1]->{params}[1], 1)}, # MOTD info
-    irc_378        => sub{$self->log_info($_[1]->{params}[1], 1)}, # MOTD info
+    irc_372        => sub{$self->log_info($_[1]->{params}[-1], 1)}, # MOTD info
+    irc_377        => sub{$self->log_info($_[1]->{params}[-1], 1)}, # MOTD info
+    irc_378        => sub{$self->log_info($_[1]->{params}[-1], 1)}, # MOTD info
+    irc_422        => sub{$self->log_info($_[1]->{params}[-1])}, # No MOTD
+    irc_464        => sub{$self->disconnect("bad USER/PASS")},
   );
   $self->cl->ctcp_auto_reply ('VERSION', ['VERSION', "alice $App::Alice::VERSION"]);
   $self->connect unless $self->disabled;
 }
 
+sub broadcast {
+  my $self = shift;
+  $self->app->broadcast(@_);
+}
+
 sub log_info {
+  my ($self, $msg, $monospaced) = @_;
+  return unless $msg;
+  $self->broadcast($self->format_info($msg, $monospaced));
+}
+
+sub format_info {
   my ($self, $msg, $monospaced) = @_;
   $self->app->log_info($self->alias, $msg, 0, $monospaced);
 }
 
 sub window {
   my ($self, $title) = @_;
-  return $self->app->find_or_create_window(
-           $title, $self);
+  return $self->app->find_or_create_window($title, $self);
 }
 
 sub find_window {
@@ -132,7 +143,9 @@ sub nick {
 
 sub windows {
   my $self = shift;
-  return grep {$_->id ne "info" && $_->irc->alias eq $self->alias} $self->app->windows;
+  return grep
+    {$_->id ne "info" && $_->irc->alias eq $self->alias}
+    $self->app->windows;
 }
 
 sub connect {
@@ -140,21 +153,19 @@ sub connect {
   $self->disabled(0);
   $self->increase_reconnect_count;
   if (!$self->config->{host} or !$self->config->{port}) {
-    $self->app->send([$self->log_info("can't connect: missing either host or port")]);
+    $self->log_info("can't connect: missing either host or port");
     return;
   }
   if ($self->reconnect_count > 1) {
-    $self->app->send([
-      $self->log_info("reconnecting: attempt " . $self->reconnect_count),
-    ]);
+    $self->log_info("reconnecting: attempt " . $self->reconnect_count);
   }
   else {
-    $self->app->send([$self->log_info("connecting")]);
+    $self->log_info("connecting");
   }
   $self->cl->connect(
     $self->config->{host}, $self->config->{port},
     {
-      nick     => $self->config->{nick},
+      nick     => $self->nick,
       real     => $self->config->{ircname},
       password => $self->config->{password},
       user     => $self->config->{username},
@@ -166,31 +177,23 @@ sub connected {
   my ($self, $cl, $err) = @_;
   $self->log_info("connected");
   if (defined $err) {
-    $self->app->send([
-      $self->log_info("connect error: $err")
-    ]);
+    $self->log_info("connect error: $err");
     $self->reconnect(60);
   }
   else {
     $self->reset_reconnect_count;
     $self->is_connected(1);
-    $self->cl->register(
-      $self->config->{nick},
-      $self->config->{username},
-      $self->config->{ircname},
-      $self->config->{password},
-    );
   }
 }
 
 sub reconnect {
   my ($self, $time) = @_;
   if ($self->reconnect_count > 4) {
-    $self->app->send([$self->log_info("too many failed reconnects, giving up")]);
+    $self->log_info("too many failed reconnects, giving up");
     return;
   }
   $time = 60 unless $time >= 0;
-  $self->app->send([$self->log_info("reconnecting in $time seconds")]);
+  $self->log_info("reconnecting in $time seconds");
   $self->reconnect_timer(
     AnyEvent->timer(after => $time, cb => sub {
       $self->connect unless $self->is_connected;
@@ -203,37 +206,44 @@ sub registered {
   my @log;
   $self->cl->enable_ping (60, sub {
     $self->is_connected(0);
-    $self->app->send([$self->log_info("ping timeout")]);
+    $self->log_info("ping timeout");
     $self->reconnect(0);
   });
   for (@{$self->config->{on_connect}}) {
-    push @log, $self->log_info("sending $_");
-    $self->cl->send_raw(split /\s+/);
+    push @log, $self->format_info("sending $_");
+    $self->cl->send_raw($_);
   }
 
   for (@{$self->config->{channels}}) {
-    push @log, $self->log_info("joining $_");
+    push @log, $self->format_info("joining $_");
     $self->cl->send_srv("JOIN", split /\s+/);
   }
-  $self->app->send(\@log);
+  $self->broadcast(@log);
 };
 
 sub disconnected {
   my ($self, $cl, $reason) = @_;
-  return if $reason eq "reconnect requested.";
   $reason = "" unless $reason;
-  $self->app->send([$self->log_info("disconnected: $reason")]);
+  return if $reason eq "reconnect requested.";
+  my @windows = $self->windows;
+  my @log = $self->format_info("disconnected: $reason");
+  if ($self->is_connected) {
+    push @log, map {$_->format_event("disconnect", $self->nick, $reason)} @windows;
+    push @log, map {$_->disconnect_action} @windows;
+  }
+  $self->broadcast(@log);
   $self->is_connected(0);
   $self->reconnect(0) unless $self->disabled;
   if ($self->removed) {
     delete $self->app->ircs->{$self->alias};
-    $self = undef;
+    undef $self;
   }
 }
 
 sub disconnect {
-  my $self = shift;
+  my ($self, $msg) = @_;
   $self->disabled(1);
+  $self->log_info("Disconnecting: $msg") if $msg;
   if ($self->is_connected) {
     $self->cl->send_srv("QUIT" => $self->app->config->quitmsg);
   }
@@ -255,7 +265,7 @@ sub publicmsg {
     return if $self->app->is_ignore($nick);
     my $text = $msg->{params}[1];
     $self->app->logger->log_message(time, $nick, $channel, $text);
-    $self->app->send([$window->format_message($nick, $text)]); 
+    $self->broadcast($window->format_message($nick, $text)); 
   }
 }
 
@@ -267,10 +277,10 @@ sub privatemsg {
     return if $self->app->is_ignore($from);
     my $window = $self->window($from);
     $self->app->logger->log_message(time, $from, $from, $text);
-    $self->app->send([$window->format_message($from, $text)]); 
+    $self->broadcast($window->format_message($from, $text)); 
   }
   elsif ($msg->{command} eq "NOTICE") {
-    $self->app->send([$self->log_info($text)]);
+    $self->log_info($text);
   }
 }
 
@@ -280,21 +290,22 @@ sub ctcp_action {
   if (my $window = $self->find_window($channel)) {
     my $text = "• $msg";
     $self->app->logger->log_message(time, $nick, $channel, $text);
-    $self->app->send([$window->format_message($nick, $text)]);
+    $self->broadcast($window->format_message($nick, $text));
   }
 }
 
 sub nick_change {
   my ($self, $cl, $old_nick, $new_nick, $is_self) = @_;
   $self->rename_nick($old_nick, $new_nick);
-  $self->app->send([
+  $self->broadcast(
     map  {$_->format_event("nick", $old_nick, $new_nick)}
     grep {$_} $self->nick_windows($new_nick)
-  ]);
+  );
 }
 
 sub _join {
   my ($self, $cl, $nick, $channel, $is_self) = @_;
+  
   if (!$self->includes_nick($nick)) {
     $self->add_nick($nick, {nick => $nick, channels => {$channel => ''}}); 
   }
@@ -303,11 +314,13 @@ sub _join {
   }
   if ($is_self) {
     $self->app->create_window($channel, $self);
-    $self->cl->send_srv("WHO $channel");
+    # client library only sends WHO if the server doesn't
+    # send hostnames with NAMES list (UHNAMES), we to WHO always
+    $self->cl->send_srv("WHO" => $channel) if $cl->isupport("UHNAMES");
   }
   elsif (my $window = $self->find_window($channel)) {
-    $self->cl->send_srv("WHO $nick");
-    $self->app->send([$window->format_event("joined", $nick)]);
+    $self->cl->send_srv("WHO" => $nick);
+    $self->broadcast($window->format_event("joined", $nick));
   }
 }
 
@@ -328,7 +341,7 @@ sub channel_add {
 sub part {
   my ($self, $cl, $nick, $channel, $is_self, $msg) = @_;
   if ($is_self and my $window = $self->find_window($channel)) {
-    $self->app->send([$self->log_info("leaving $channel")]);
+    $self->log_info("leaving $channel");
     $self->app->close_window($window);
   }
 }
@@ -337,10 +350,20 @@ sub channel_remove {
   my ($self, $cl, $msg, $channel, @nicks) = @_;
   return if !@nicks or grep {$_ eq $self->nick} @nicks;
   if (my $window = $self->find_window($channel)) {
-    $self->remove_nicks(@nicks);
-    $self->app->send([
-      map {$window->format_event("left", $_, $msg->{params}[0])} @nicks
-    ]);
+    my $body;
+    if ($msg->{command} eq "PART") {
+      for (@nicks) {
+        delete $self->nicks->{$_}{channels}{$channel};
+        $self->remove_nick($_) if !keys %{$self->nicks->{$_}{channels}};
+      }
+    }
+    else {
+      $self->remove_nicks(@nicks);
+      $body = $msg->{params}[0];
+    }
+    $self->broadcast(
+      map {$window->format_event("left", $_, $body)} @nicks
+    );
   }
 }
 
@@ -348,7 +371,7 @@ sub channel_topic {
   my ($self, $cl, $channel, $topic, $nick) = @_;
   if (my $window = $self->find_window($channel)) {
     $window->topic({string => $topic, author => $nick, time => time});
-    $self->app->send([$window->format_event("topic", $nick, $topic)]);
+    $self->broadcast($window->format_event("topic", $nick, $topic));
   }
 }
 
@@ -373,7 +396,10 @@ sub nick_windows {
 
 sub irc_352 {
   my ($self, $cl, $msg) = @_;
-  my (undef, $channel, $user, $ip, $server, $nick, $flags, $real) = @{$msg->{params}};
+  # ignore the first param if it our nick, some servers include it
+  shift @{$msg->{params}} if $msg->{params}[0] eq $self->nick;
+  my ($channel, $user, $ip, $server, $nick, $flags, @real) = @{$msg->{params}};
+  my $real = join " ", @real;
   return unless $nick;
   $real =~ s/^\d // if $real;
   my $info = {
@@ -396,7 +422,7 @@ sub irc_352 {
 sub irc_366 {
   my ($self, $cl, $msg) = @_;
   if (my $window = $self->find_window($msg->{params}[1])) {
-    $self->app->send([$window->join_action]);
+    $self->broadcast($window->join_action);
   }
 }
 
@@ -404,6 +430,7 @@ sub rename_nick {
   my ($self, $nick, $new_nick) = @_;
   return unless $self->includes_nick($nick);
   my $info = $self->get_nick_info($nick);
+  $info->{nick} = $new_nick;
   $self->set_nick_info($new_nick, $info);
   $self->remove_nick($nick);
 }
@@ -424,7 +451,7 @@ sub nick_avatar {
   my ($self, $nick) = @_;
   my $info = $self->get_nick_info($nick);
   if ($info and $info->{real}) {
-    if ($info->{real} =~ /([^<\s]+@[^\s>]+)/) {
+    if ($info->{real} =~ /([^<\s]+@[^\s>]+\.[^\s>]+)/) {
       my $email = $1;
       return "//www.gravatar.com/avatar/"
            . md5_hex($email) . "?s=32&amp;r=x";

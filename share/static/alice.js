@@ -7146,7 +7146,7 @@ Object.extend(Alice, {
   makeLinksClickable: function(content) {
     return content.replace(
       /(\b)(([\w-]+:\/\/?|www[.])[^\s()<>]+(?:\([\w\d]+\)|([^[<,.;\s]|\/)))/gi,
-      "$1<a href=\"$2\">$2</a>"
+      "$1<a href=\"$2\" rel=\"noreferrer\">$2</a>"
     );
   },
 
@@ -7188,14 +7188,6 @@ Object.extend(Alice, {
           if (m) return m[1]
         });
         if (order.length) alice.connection.sendTabOrder(order);
-        tabs.invoke('removeClassName','leftof_active');
-        for (var i=0; i < tabs.length; i++) {
-          if (tabs[i].hasClassName('active')) {
-            if (tabs[i].previous()) tabs[i].previous().addClassName('leftof_active');
-            tabs[i].removeClassName('leftof_active');
-            return;
-          }
-        }
       }
     });
   },
@@ -7225,7 +7217,7 @@ Alice.Application = Class.create({
     this.window_map = new Hash();
     this.previousFocus = 0;
     this.connection = new Alice.Connection(this);
-    this.filters = [ Alice.makeLinksClickable, Alice.uncacheGravatar ];
+    this.filters = [ Alice.makeLinksClickable ];
     this.monospaceNicks = ['Shaniqua', 'root', 'p6eval'];
     this.keyboard = new Alice.Keyboard(this);
     setTimeout(this.connection.connect.bind(this.connection), 1000);
@@ -7340,6 +7332,28 @@ Alice.Application = Class.create({
       this.activeWindow().tabOverflowButton.selected = true;
       Alice.makeSortable();
     }
+  },
+
+  highlightChannelSelect: function() {
+    var img = $('tab_overflow_button').down('img');
+    img.src = img.src.replace('overflow.png','overflow-active.png');
+  },
+
+  unHighlightChannelSelect: function() {
+    var img = $('tab_overflow_button').down('img');
+    img.src = img.src.replace('overflow-active.png','overflow.png');
+  },
+
+  updateChannelSelect: function() {
+    var windows = this.windows();
+    for (var i=0; i < windows.length; i++) {
+      var win = windows[i];
+      if ((win.tab.hasClassName('unread') || win.tab.hasClassName('highlight')) && win.isTabWrapped()) {
+        this.highlightChannelSelect();
+        return;
+      }
+    }
+    this.unHighlightChannelSelect();
   },
 
   handleAction: function(action) {
@@ -7547,13 +7561,15 @@ Alice.Window = Class.create({
     document.observe("mouseover", this.showNick.bind(this));
   },
 
+  isTabWrapped: function() {
+    return this.tab.offsetTop > 0;
+  },
+
   unFocus: function() {
     this.active = false;
-    this.application.previousFocus = this;
     this.element.removeClassName('active');
     this.tab.removeClassName('active');
     this.tabOverflowButton.selected = false;
-    if (this.tab.previous()) this.tab.previous().removeClassName("leftof_active");
   },
 
   showNick: function (e) {
@@ -7601,17 +7617,17 @@ Alice.Window = Class.create({
 
   focus: function(event) {
     document.title = this.title;
-    if (this.application.activeWindow()) this.application.activeWindow().unFocus();
+    this.application.previousFocus = this.application.activeWindow();
+    this.application.windows().invoke("unFocus");
     this.active = true;
     this.tab.addClassName('active');
     this.element.addClassName('active');
     this.tabOverflowButton.selected = true;
     this.markRead();
-    this.tab.removeClassName("leftof_active");
-    if (this.tab.previous()) this.tab.previous().addClassName("leftof_active");
     this.scrollToBottom(true);
     if (!Prototype.Browser.MobileSafari) this.input.focus();
     this.element.redraw();
+    this.application.updateChannelSelect();
   },
 
   markRead: function () {
@@ -7647,7 +7663,8 @@ Alice.Window = Class.create({
           this.displayTopic(message.body.escapeHTML());
         }
         else {
-          this.messages.insert(message.full_html);
+          var full_html = Alice.uncacheGravatar(message.full_html);
+          this.messages.insert(full_html);
           var node = this.messages.down("li:last-child div.msg");
           node.innerHTML = this.application.applyFilters(node.innerHTML);
           var span = this.messages.down('li:last-child span.nickhint');
@@ -7671,13 +7688,13 @@ Alice.Window = Class.create({
       if (this.element.hasClassName('active'))
         this.scrollToBottom();
       else if (!message.buffered && this.title != "info") {
-        if (message.event == "say" && message.highlight) {
-          this.tab.addClassName("highlight");
-          this.tabOverflowButton.addClassName("unread");
-        }
-        else if (message.event == "say") {
+        if (message.event == "say") {
           this.tab.addClassName("unread");
           this.tabOverflowButton.addClassName("unread");
+          if (this.isTabWrapped()) this.application.highlightChannelSelect();
+        }
+        if (message.highlight) {
+          this.tab.addClassName("highlight");
         }
       }
     }
@@ -7852,6 +7869,7 @@ Alice.Keyboard = Class.create({
     this.enable();
 
     this.shortcut("Cmd+C", { propagate: true });
+    this.shortcut("Ctrl+C", { propogate: true });
     this.shortcut("Cmd+K");
     this.shortcut("Cmd+B");
     this.shortcut("Cmd+F");
@@ -7883,6 +7901,10 @@ Alice.Keyboard = Class.create({
     if (!this.activeWindow.input.focused) {
       this.activeWindow.input.cancelNextFocus();
     }
+  },
+
+  onCtrlC: function(event) {
+    this.onCmdC(event);
   },
 
   onCmdK: function() {

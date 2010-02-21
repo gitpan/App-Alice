@@ -23,14 +23,13 @@ lib/App/Alice/Notifier/Growl.pm
 lib/App/Alice/Notifier/LibNotify.pm
 lib/App/Alice/Signal.pm
 lib/App/Alice/Stream.pm
+lib/App/Alice/Test/MockIRC.pm
 lib/App/Alice/Window.pm
 Makefile.PL
 MANIFEST			This list of files
 MANIFEST.SKIP
 META.yml
 README.pod
-share/log.db
-share/proxy.psgi
 share/static/alice-min.js
 share/static/alice.js
 share/static/favicon.ico
@@ -40,6 +39,7 @@ share/static/image/background.png
 share/static/image/buttesfire.png
 share/static/image/buttesfire_inverted.png
 share/static/image/config.png
+share/static/image/overflow-active.png
 share/static/image/overflow.png
 share/static/image/pause.png
 share/static/image/play.png
@@ -67,3 +67,8 @@ share/templates/servers.html
 share/templates/tab.html
 share/templates/window.html
 t/01-use.t
+t/02-app.t
+t/03-window.t
+t/04-irc.t
+t/log.db
+t/test_config

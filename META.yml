@@ -30,11 +30,11 @@ requires:
   DBD::SQLite: 0
   File::Copy: 0
   File::ShareDir: 0.01
-  IRC::Formatting::HTML: 0.09
+  IRC::Formatting::HTML: 0.11
   JSON: 2.12
   SQL::Abstract: 0
   Text::MicroTemplate: 0.09
   perl: 5.8.0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.07
+version: 0.08

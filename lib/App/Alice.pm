@@ -11,7 +11,7 @@ use App::Alice::Logger;
 use Any::Moose;
 use File::Copy;
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 has cond => (
   is       => 'rw',
@@ -65,6 +65,7 @@ has notifier => (
   lazy    => 1,
   default => sub {
     my $self = shift;
+    my $notifier;
     eval {
       if ($^O eq 'darwin') {
         # 5.10 doesn't seem to put Extras in @INC
@@ -74,14 +75,15 @@ has notifier => (
           lib->import("/System/Library/Perl/Extras/5.10.0"); 
         }
         require App::Alice::Notifier::Growl;
-        return App::Alice::Notifier::Growl->new;
+        $notifier = App::Alice::Notifier::Growl->new;
       }
       elsif ($^O eq 'linux') {
         require App::Alice::Notifier::LibNotify;
-        return App::Alice::Notifier::LibNotify->new;
+        $notifier = App::Alice::Notifier::LibNotify->new;
       }
     };
-    $self->log_debug("Notifications disabled...\n") if $@;
+    $self->log_debug("Notifications disabled...\n") if !$notifier;
+    return $notifier;
   }
 );
 
@@ -295,7 +297,7 @@ sub sorted_windows {
 
 sub close_window {
   my ($self, $window) = @_;
-  $self->send([$window->close_action]);
+  $self->broadcast($window->close_action);
   $self->log_debug("sending a request to close a tab: " . $window->title)
     if $self->httpd->stream_count;
   $self->remove_window($window->id);
@@ -312,19 +314,20 @@ sub add_irc_server {
 
 sub reload_config {
   my $self = shift;
-  for (keys %{$self->config->servers}) {
-    if (!$self->ircs->{$_}) {
+  for my $irc (keys %{$self->config->servers}) {
+    if (!$self->ircs->{$irc}) {
       $self->add_irc_server(
-        $_, $self->config->servers->{$_}
+        $irc, $self->config->servers->{$irc}
       );
     }
     else {
-      $self->ircs->{$_}->config($self->config->servers->{$_});
+      $self->ircs->{$irc}->config($self->config->servers->{$irc});
     }
   }
-  for ($self->connections) {
-    if (!$self->config->servers->{$_->alias}) {
-      $_->remove;
+  for my $irc ($self->connections) {
+    if (!$self->config->servers->{$irc->alias}) {
+      $self->remove_window($_->id) for $irc->windows;
+      $irc->remove;
     }
   }
 }
@@ -335,16 +338,16 @@ sub log_info {
   $self->info_window->format_message($session, $body, $highlight, $monospaced);
 }
 
-sub send {
-  my ($self, $messages, $force) = @_;
+sub broadcast {
+  my ($self, @messages) = @_;
   # add any highlighted messages to the log window
-  push @$messages, map {$self->log_info($_->{nick}, $_->{body}, 1)}
-                  grep {$_->{highlight}} @$messages;
+  push @messages, map {$self->log_info($_->{nick}, $_->{body}, 1)}
+                  grep {$_->{highlight}} @messages;
   
-  $self->httpd->broadcast($messages, $force);
+  $self->httpd->broadcast(@messages);
   
   return unless $self->notifier and ! $self->httpd->stream_count;
-  for my $message (@$messages) {
+  for my $message (@messages) {
     $self->notifier->display($message) if $message->{highlight};
   }
 }
@@ -384,9 +387,7 @@ sub add_ignore {
 
 sub remove_ignore {
   my ($self, $nick) = @_;
-  $self->config->ignore([
-    grep {$nick ne $_} $self->config->ignores
-  ]);
+  $self->config->ignore([ grep {$nick ne $_} $self->config->ignores ]);
   $self->config->write;
 }
 
@@ -398,7 +399,7 @@ sub ignores {
 sub log_debug {
   my $self = shift;
   return unless $self->config->show_debug and @_;
-  say STDERR join " ", @_;
+  print STDERR join(" ", @_), "\n";
 }
 
 __PACKAGE__->meta->make_immutable;
