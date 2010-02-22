@@ -1,15 +1,15 @@
 {
   'images' => 'show',
   'quitmsg' => 'alice.',
-  'port' => '8080',
   'ignore' => [],
+  'port' => '8080',
   'auth' => {},
   'order' => [],
   'debug' => 0,
   'servers' => {},
+  'address' => '127.0.0.1',
+  'avatars' => 'show',
   'monospace_nicks' => [
     'Shaniqua'
-  ],
-  'avatars' => 'show',
-  'address' => '127.0.0.1'
+  ]
 }

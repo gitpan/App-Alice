@@ -8,7 +8,7 @@ build_requires:
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.91'
+generated_by: 'Module::Install version 0.93'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -30,7 +30,7 @@ requires:
   DBD::SQLite: 0
   File::Copy: 0
   File::ShareDir: 0.01
-  IRC::Formatting::HTML: 0.11
+  IRC::Formatting::HTML: 0.12
   JSON: 2.12
   SQL::Abstract: 0
   Text::MicroTemplate: 0.09
@@ -38,4 +38,4 @@ requires:
   perl: 5.8.0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.09
+version: 0.10
