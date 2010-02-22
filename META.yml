@@ -34,7 +34,8 @@ requires:
   JSON: 2.12
   SQL::Abstract: 0
   Text::MicroTemplate: 0.09
+  Try::Tiny: 0
   perl: 5.8.0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.08
+version: 0.09

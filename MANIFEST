@@ -30,6 +30,7 @@ MANIFEST			This list of files
 MANIFEST.SKIP
 META.yml
 README.pod
+share/log.db
 share/static/alice-min.js
 share/static/alice.js
 share/static/favicon.ico
