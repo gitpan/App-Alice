@@ -297,6 +297,17 @@ div.left span.nickhint {
   -webkit-transition: opacity 0.5s ease-in-out;
 }
 
+div.timehint {
+  position: absolute;
+  font-size: 0.8em;
+  right: 0px;
+  top: 6px;
+  padding: 2px 4px;
+  color: #333;
+  opacity: 0;
+  text-shadow: rgba(255,255,255,1) 0 0 3px;
+}
+
 div.msg {
   min-height: 1.2em;
   margin-left: 132px;
@@ -590,7 +601,7 @@ ul#logresults {
   margin: 0;
   padding: 0;
   position: absolute;
-  top: 33px;
+  top: 34px;
   bottom: 0px;
   left: 0px;
   right: 0px;
@@ -599,8 +610,40 @@ ul#logresults {
 
 ul#logresults li {
   border-bottom: 1px solid #eee;
-  padding: 5px 10px;
+  padding: 0;
   font-size: 0.8em;
+  cursor: pointer;
+}
+
+ul#logresults div.focus:hover {
+  background: #eee;
+}
+
+ul#logresults li div.focus {
+  background: #fff;
+  padding: 5px 10px;
+}
+
+ul#logresults li.context div.focus:hover {
+  background: #fff;
+}
+
+ul#logresults li.context ul {
+  margin: 0;
+  padding: 5px 10px;
+  list-style: none;
+}
+
+ul#logresults li.context ul li {
+  border: none;
+  margin: 0;
+  padding: 2px 0;
+}
+
+ul#logresults li.context {
+  border-top: 1px solid #999;
+  border-bottom: 1px solid #999;
+  background: url(image/shadow-bottom.png) bottom left repeat-x, url(image/shadow-top.png) top left repeat-x #eee;
 }
 
 ul#logresults span.metadata {

@@ -8,12 +8,15 @@ use App::Alice::IRC;
 use App::Alice::Signal;
 use App::Alice::Config;
 use App::Alice::Logger;
+use App::Alice::History;
 use Any::Moose;
 use File::Copy;
+use Digest::MD5 qw/md5_hex/;
+use Encode;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
-has cond => (
+has condvar => (
   is       => 'rw',
   isa      => 'AnyEvent::CondVar'
 );
@@ -32,8 +35,8 @@ has msgid => (
 sub next_msgid {$_[0]->msgid($_[0]->msgid + 1)}
 
 has irc_map => (
-  is      => 'ro',
-  isa     => 'HashRef',
+  is      => 'rw',
+  isa     => 'HashRef[App::Alice::IRC]',
   default => sub {{}},
 );
 
@@ -52,7 +55,7 @@ has standalone => (
 );
 
 has httpd => (
-  is      => 'ro',
+  is      => 'rw',
   isa     => 'App::Alice::HTTPD',
   lazy    => 1,
   default => sub {
@@ -90,12 +93,12 @@ has notifier => (
         $notifier = App::Alice::Notifier::LibNotify->new;
       }
     };
-    $self->log_debug("Notifications disabled...\n") if !$notifier;
+    $self->log(info => "Notifications disabled") unless $notifier;
     return $notifier;
   }
 );
 
-has logger => (
+has history => (
   is      => 'ro',
   lazy    => 1,
   default => sub {
@@ -104,11 +107,23 @@ has logger => (
       copy($self->config->assetdir."/log.db",
            $self->config->path."/log.db");
     }
-    App::Alice::Logger->new(
+    App::Alice::History->new(
       dbfile => $self->config->path ."/log.db"
     );
   },
 );
+
+sub store {
+  my $self = shift;
+  $self->history->store(@_);
+}
+
+has logger => (
+  is        => 'ro',
+  default   => sub {App::Alice::Logger->new},
+);
+
+sub log {$_[0]->logger->log($_[1] => $_[2]) if $_[0]->config->show_debug}
 
 has window_map => (
   is        => 'rw',
@@ -151,10 +166,16 @@ has 'info_window' => (
   }
 );
 
+has 'shutting_down' => (
+  is => 'rw',
+  default => 0,
+  isa => 'Bool',
+);
+
 sub BUILDARGS {
   my ($class, %options) = @_;
   my $self = {standalone => 1};
-  for (qw/standalone logger notifier/) {
+  for (qw/standalone history notifier/) {
     if (exists $options{$_}) {
       $self->{$_} = $options{$_};
       delete $options{$_};
@@ -170,16 +191,15 @@ sub run {
   $self->info_window;
   $self->template;
   $self->httpd;
-  $self->logger;
   $self->notifier;
+
+  print STDERR "Location: http://".$self->config->http_address.":".$self->config->http_port."/\n";
 
   $self->add_irc_server($_, $self->config->servers->{$_})
     for keys %{$self->config->servers};
-
-  print STDERR "Location: http://".$self->config->http_address.":". $self->config->http_port ."/view\n";
   
   if ($self->standalone) { 
-    $self->cond(AnyEvent->condvar);
+    $self->condvar(AnyEvent->condvar);
     my @sigs;
     for my $sig (qw/INT QUIT/) {
       my $w = AnyEvent->signal(
@@ -189,16 +209,34 @@ sub run {
       push @sigs, $w;
     }
 
-    $self->cond->wait;
-    print STDERR "Disconnecting, please wait\n";
-    $self->httpd->ping_timer(undef);
-    $_->disconnect('alice') for $self->ircs;
-    my $timer = AnyEvent->timer(
-      after => 3,
-      cb    => sub{exit(0)}
-    );
-    AnyEvent->condvar->wait;
+    $self->condvar->recv;
   }
+}
+
+sub init_shutdown {
+  my ($self, $cb, $msg) = @_;
+  $self->{on_shutdown} = $cb;
+  $self->shutting_down(1);
+  $self->httpd->shutdown;
+  if (!$self->ircs) {
+    $self->shutdown;
+    return;
+  }
+  print STDERR "\nDisconnecting, please wait\n"
+    if $self->standalone;
+  $_->init_shutdown($msg) for $self->ircs;
+  $self->{shutdown_timer} = AnyEvent->timer(
+    after => 3,
+    cb    => sub{$self->shutdown}
+  );
+}
+
+sub shutdown {
+  my $self = shift;
+  $self->irc_map({});
+  delete $self->{shutdown_timer} if $self->{shutdown_timer};
+  $self->{on_shutdown}->() if $self->{on_shutdown};
+  $self->condvar->send if $self->condvar;
 }
 
 sub dispatch {
@@ -263,9 +301,7 @@ sub create_window {
 
 sub _build_window_id {
   my ($title, $connection_alias) = @_;
-  my $name = lc($title . $connection_alias);
-  $name =~ s/[^\w\d]//g;
-  return "win_" . $name;
+  return "win_" . md5_hex(encode_utf8("$title-$connection_alias"));
 }
 
 sub find_or_create_window {
@@ -300,9 +336,9 @@ sub sorted_windows {
 sub close_window {
   my ($self, $window) = @_;
   $self->broadcast($window->close_action);
-  $self->log_debug("sending a request to close a tab: " . $window->title)
+  $self->log(debug => "sending a request to close a tab: " . $window->title)
     if $self->httpd->stream_count;
-  $self->remove_window($window->id);
+  $self->remove_window($window->id) if $window->type ne "info";
 }
 
 sub add_irc_server {
@@ -335,7 +371,7 @@ sub reload_config {
   }
 }
 
-sub log_info {
+sub format_info {
   my ($self, $session, $body, $highlight, $monospaced) = @_;
   $highlight = 0 unless $highlight;
   $self->info_window->format_message($session, $body, $highlight, $monospaced);
@@ -344,7 +380,7 @@ sub log_info {
 sub broadcast {
   my ($self, @messages) = @_;
   # add any highlighted messages to the log window
-  push @messages, map {$self->log_info($_->{nick}, $_->{body}, 1)}
+  push @messages, map {$self->format_info($_->{nick}, $_->{body}, 1)}
                   grep {$_->{highlight}} @messages;
   
   $self->httpd->broadcast(@messages);
@@ -397,12 +433,6 @@ sub remove_ignore {
 sub ignores {
   my $self = shift;
   return $self->config->ignores;
-}
-
-sub log_debug {
-  my $self = shift;
-  return unless $self->config->show_debug and @_;
-  print STDERR join(" ", @_), "\n";
 }
 
 __PACKAGE__->meta->make_immutable;

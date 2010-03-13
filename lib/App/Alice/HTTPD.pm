@@ -7,6 +7,7 @@ use App::Alice::Stream;
 use App::Alice::CommandDispatch;
 use MIME::Base64;
 use JSON;
+use Encode;
 use Any::Moose;
 
 has 'app' => (
@@ -17,7 +18,7 @@ has 'app' => (
 
 has 'httpd' => (
   is  => 'rw',
-  isa => 'AnyEvent::HTTPD'
+  isa => 'AnyEvent::HTTPD|Undef'
 );
 
 has 'streams' => (
@@ -61,9 +62,12 @@ sub BUILD {
     '/get'          => sub{$self->image_proxy(@_)},
     '/logs'         => sub{$self->send_logs(@_)},
     '/search'       => sub{$self->send_search(@_)},
+    '/range'        => sub{$self->send_range(@_)},
+    '/'             => sub{$self->send_index(@_)},
     'client_disconnected' => sub{$self->purge_disconnects(@_)},
     request         => sub{$self->check_authentication(@_)},
   );
+  $httpd->reg_cb('' => sub{$self->not_found($_[1])});
   $self->httpd($httpd);
   $self->ping;
 }
@@ -82,8 +86,17 @@ sub ping {
   ));
 }
 
+sub shutdown {
+  my $self = shift;
+  $_->close for $self->streams;
+  $self->streams([]);
+  $self->ping_timer(undef);
+  $self->httpd(undef);
+}
+
 sub image_proxy {
   my ($self, $httpd, $req) = @_;
+  $httpd->stop_request;
   my $url = $req->url;
   if (my %vars = $req->vars) {
     my $query = join "&", map {"$_=$vars{$_}"} keys %vars;
@@ -119,7 +132,7 @@ sub check_authentication {
       return;
     }
     else {
-      $self->log_debug("auth failed");
+      $self->app->log(info => "auth failed");
     }
   }
   $httpd->stop_request;
@@ -128,7 +141,8 @@ sub check_authentication {
 
 sub setup_stream {
   my ($self, $httpd, $req) = @_;
-  $self->log_debug("opening new stream");
+  $httpd->stop_request;
+  $self->app->log(info => "opening new stream");
   my $msgid = $req->parm('msgid') || 0;
   $self->add_stream(
     App::Alice::Stream->new(
@@ -150,13 +164,15 @@ sub purge_disconnects {
 
 sub handle_message {
   my ($self, $httpd, $req) = @_;
+  $httpd->stop_request;
   my $msg  = $req->parm('msg');
+  utf8::decode($msg);
   my $source = $req->parm('source');
   my $window = $self->app->get_window($source);
   if ($window) {
     for (split /\n/, $msg) {
       eval {$self->app->dispatch($_, $window) if length $_};
-      if ($@) {$self->log_debug($@)}
+      if ($@) {$self->app->log(info => $@)}
     }
   }
   $req->respond([200,'ok',{'Content-Type' => 'text/plain'}, 'ok']);
@@ -164,12 +180,13 @@ sub handle_message {
 
 sub handle_static {
   my ($self, $httpd, $req) = @_;
+  $httpd->stop_request;
   my $file = $req->url;
   my ($ext) = ($file =~ /[^\.]\.(.+)$/);
   my $headers;
   if (-e $self->config->assetdir . "/$file") {
     open my $fh, '<', $self->config->assetdir . "/$file";
-    if ($ext =~ /^(?:png|gif|jpg|jpeg)$/i) {
+    if ($ext =~ /^(?:png|gif|jpe?g)$/i) {
       $headers = {"Content-Type" => "image/$ext"};
     }
     elsif ($ext =~ /^js$/) {
@@ -187,8 +204,9 @@ sub handle_static {
     else {
       return $self->not_found($req);
     }
-    my @file = <$fh>;
-    $req->respond([200, 'ok', $headers, join("", @file)]);
+    my $content = '';
+    { local $/; $content = <$fh>; }
+    $req->respond([200, 'ok', $headers, $content]);
     return;
   }
   $self->not_found($req);
@@ -196,39 +214,54 @@ sub handle_static {
 
 sub send_index {
   my ($self, $httpd, $req) = @_;
+  $httpd->stop_request;
   my $output = $self->app->render('index');
-  $req->respond([200, 'ok', {'Content-Type' => 'text/html; charset=utf-8'}, $output]);
+  $req->respond([200, 'ok', {'Content-Type' => 'text/html; charset=utf-8'}, encode_utf8 $output]);
 }
 
 sub send_logs {
   my ($self, $httpd, $req) = @_;
-  $self->app->logger->refresh_channels(sub {
-    my $output = $self->app->render('logs', $self->app->logger);
-    $req->respond([200, 'ok', {'Content-Type' => 'text/html; charset=utf-8'}, $output]);
-  });
+  $httpd->stop_request;
+  my $output = $self->app->render('logs');
+  $req->respond([200, 'ok', {'Content-Type' => 'text/html; charset=utf-8'}, encode_utf8 $output]);
 }
 
 sub send_search {
   my ($self, $httpd, $req) = @_;
-  my $results = $self->app->logger->search($req->vars, sub {
+  $httpd->stop_request;
+  $self->app->history->search($req->vars, sub {
     my $rows = shift;
-    my $content = $self->app->render('results', @$rows);
-    $req->respond([200, 'ok', {'Content-Type' => 'text/html; charset=utf-8'},
-      $content]);
+    my $content = $self->app->render('results', $rows);
+    $req->respond([200, 'ok', {'Content-Type' => 'text/html; charset=utf-8'}, encode_utf8 $content]);
+  });
+}
+
+sub send_range {
+  my ($self, $httpd, $req) = @_;
+  $httpd->stop_request;
+  my %query = $req->vars;
+  $self->app->history->range($query{channel}, $query{time}, sub {
+    my ($before, $after) = @_;
+    $before = $self->app->render('range', $before, 'before');
+    $after = $self->app->render('range', $after, 'after');
+   $req->respond([200, 'ok', {'Content-Type' => 'text/html; charset=utf-8'}, to_json [$before, $after]]);
   });
 }
 
 sub send_config {
   my ($self, $httpd, $req) = @_;
-  $self->log_debug("serving config");
+  $httpd->stop_request;
+  $self->app->log(info => "serving config");
   my $output = $self->app->render('servers');
   $req->respond([200, 'ok', {}, $output]);
 }
 
 sub server_config {
   my ($self, $httpd, $req) = @_;
-  $self->log_debug("serving blank server config");
+  $httpd->stop_request;
+  $self->app->log(info => "serving blank server config");
   my $name = $req->parm('name');
+  $name =~ s/\s+//g;
   my $config = $self->app->render('new_server', $name);
   my $listitem = $self->app->render('server_listitem', $name);
   $req->respond([200, 'ok', {"Cache-control" => "no-cache"}, 
@@ -237,7 +270,8 @@ sub server_config {
 
 sub save_config {
   my ($self, $httpd, $req) = @_;
-  $self->log_debug("saving config");
+  $httpd->stop_request;
+  $self->app->log(info => "saving config");
   my $new_config = {servers => {}};
   my %params = $req->vars;
   for my $name (keys %params) {
@@ -267,7 +301,8 @@ sub save_config {
 
 sub tab_order  {
   my ($self, $httpd, $req) = @_;
-  $self->log_debug("updating tab order");
+  $httpd->stop_request;
+  $self->app->log(debug => "updating tab order");
   my %vars = $req->vars;
   $self->app->tab_order([
     grep {defined $_} @{$vars{tabs}}
@@ -277,20 +312,8 @@ sub tab_order  {
 
 sub not_found  {
   my ($self, $req) = @_;
+  $self->app->log(debug => "sending 404 " . $req->url);
   $req->respond([404,'not found']);
-}
-
-sub log_debug {
-  my $self = shift;
-  return unless $self->config->show_debug and @_;
-  print STDERR join " ", @_ if $self->config->show_debug;
-  print "\n";
-}
-
-sub log_info {
-  return unless @_;
-  print STDERR join " ", @_;
-  print STDERR "\n";
 }
 
 __PACKAGE__->meta->make_immutable;

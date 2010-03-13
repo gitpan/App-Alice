@@ -7146,7 +7146,7 @@ Object.extend(Alice, {
   makeLinksClickable: function(content) {
     return content.replace(
       /(\b)(([\w-]+:\/\/?|www[.])[^\s()<>]+(?:\([\w\d]+\)|([^[<,.;\s]|\/)))/gi,
-      "$1<a href=\"$2\" rel=\"noreferrer\">$2</a>"
+      "$1<a href=\"$2\" target=\"_blank\" rel=\"noreferrer\">$2</a>"
     );
   },
 
@@ -7579,18 +7579,31 @@ Alice.Window = Class.create({
       clearTimeout(this.visibleNickTimeout);
 
       this.visibleNick = li;
-      var span = li.down().down(2);
+      var nick = li.down().down(2);
+      var time = li.childNodes[5];
 
-      if (span) {
-        this.visibleNickTimeout = setTimeout(function(span) {
-          span.style.webkitTransition = "opacity 0.1s ease-in-out";
-          span.style.opacity = 1;
+      if (nick || time) {
+        this.visibleNickTimeout = setTimeout(function(nick, time) {
+          if (nick) {
+            nick.style.opacity = 1;
+            nick.style.webkitTransition = "opacity 0.1s ease-in-out";
+          }
+          if (time) {
+            time.style.webkitTransition = "opacity 0.1s ease-in-out";
+            time.style.opacity = 1;
+          }
           setTimeout(function(){
             if (this.nicksVisible) return;
-            span.style.webkitTransition = "opacity 0.25s ease-in";
-            span.style.opacity = 0
-          }.bind(this,span) , 1000);
-        }.bind(this,span), 500);
+            if (nick) {
+              nick.style.webkitTransition = "opacity 0.25s ease-in";
+              nick.style.opacity = 0;
+            }
+            if (time) {
+              time.style.webkitTransition = "opacity 0.25s ease-in";
+              time.style.opacity = 0;
+            }
+          }.bind(this, nick, time) , 1000);
+        }.bind(this, nick, time), 500);
       }
     }
     else {
@@ -7605,12 +7618,20 @@ Alice.Window = Class.create({
         span.style.webkitTransition = "opacity 0.1s ease-in";
         span.style.opacity = 0;
       });
+      this.messages.select("div.timehint").each(function(span){
+        span.style.webkitTransition = "opacity 0.1s ease-in";
+        span.style.opacity = 0;
+      });
     }
     else {
       this.messages.select("span.nickhint").each(function(span){
         span.style.webkitTransition = "opacity 0.1s ease-in-out";
         span.style.opacity = 1;
-      })
+      });
+      this.messages.select("div.timehint").each(function(span){
+        span.style.webkitTransition = "opacity 0.1s ease-in-out";
+        span.style.opacity = 1;
+      });
     }
     this.nicksVisible = !this.nicksVisible;
   },
@@ -7667,10 +7688,15 @@ Alice.Window = Class.create({
           this.messages.insert(full_html);
           var node = this.messages.down("li:last-child div.msg");
           node.innerHTML = this.application.applyFilters(node.innerHTML);
-          var span = this.messages.down('li:last-child span.nickhint');
-          if (span && this.nicksVisible) {
-            span.style.webkitTransition = 'none 0 linear';
-            span.style.opacity = 1;
+          var nick = this.messages.down('li:last-child span.nickhint');
+          if (nick && this.nicksVisible) {
+            nick.style.webkitTransition = 'none 0 linear';
+            nick.style.opacity = 1;
+          }
+          var time = this.messages.down('li:last-child div.timehint');
+          if (time && this.nicksVisible) {
+            time.style.webkitTransition = 'none 0 linear';
+            time.style.opacity = 1;
           }
         }
       }
@@ -7869,7 +7895,7 @@ Alice.Keyboard = Class.create({
     this.enable();
 
     this.shortcut("Cmd+C", { propagate: true });
-    this.shortcut("Ctrl+C", { propogate: true });
+    this.shortcut("Ctrl+C", { propagate: true });
     this.shortcut("Cmd+K");
     this.shortcut("Cmd+B");
     this.shortcut("Cmd+F");

@@ -37,19 +37,15 @@ has 'timer' => (
 );
 
 has 'request' => (
-  is  => 'ro',
-  isa => 'AnyEvent::HTTPD::Request',
+  is  => 'rw',
+  isa => 'AnyEvent::HTTPD::Request|Undef',
   required => 1,
 );
 
 has callback => (
   is  => 'rw',
   isa => 'CodeRef',
-  default => sub {
-    sub {
-      print STDERR "no data callback set up on stream yet!\n"
-    }
-  }
+  default => sub {sub{}}
 );
 
 sub BUILD {
@@ -59,7 +55,7 @@ sub BUILD {
   $self->offset($local_time - $remote_time);
   $self->request->respond([
     200, 'ok', {'Content-Type' => 'multipart/mixed; boundary='.$self->seperator.'; charset=utf-8'},
-    sub {$_[0] ? $self->callback($_[0]) : $self->disconnected(1)}
+    sub {ref $_[0] ? $self->callback($_[0]) : $self->disconnected(1)}
   ]);
   $self->broadcast;
 }
@@ -73,6 +69,14 @@ sub broadcast {
   }
   $self->callback->( $self->to_string );
   $self->flush;
+}
+
+sub close {
+  my $self = shift;
+  $self->timer(undef);
+  $self->callback() if $self->callback;
+  $self->request(undef);
+  $self->disconnected(1);
 }
 
 sub flooded {

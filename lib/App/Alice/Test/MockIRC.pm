@@ -86,6 +86,9 @@ sub ctcp_auto_reply {}
 sub connect {
   my $self = shift;
   $self->cbs->{connect}->();
+}
+sub register {
+  my $self = shift;
   $self->cbs->{registered}->();
 }
 sub disconnect {
@@ -101,4 +104,5 @@ sub reg_cb {
   }
 }
 
+__PACKAGE__->meta->make_immutable;
 1;

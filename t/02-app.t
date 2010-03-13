@@ -1,10 +1,10 @@
 use Test::More;
 use App::Alice;
-use App::Alice::Test::NullLogger;
+use App::Alice::Test::NullHistory;
 
-my $logger = App::Alice::Test::NullLogger->new;
+my $history = App::Alice::Test::NullHistory->new;
 my $app = App::Alice->new(
-  logger => $logger,
+  history => $history,
   standalone => 0,
   path => 't/alice',
   file => "test_config"
@@ -29,7 +29,7 @@ my $window = $app->create_window("test-window", $irc);
 ok $window, "create window";
 
 my $window_id = App::Alice::_build_window_id("test-window", "test");
-is $window_id, "win_testwindowtest", "build window id";
+is $window_id, "win_d6c0344fe1630e09bf260711efc0412c", "build window id";
 ok $app->has_window($window_id), "window exists";
 ok $app->find_window("test-window", $irc), "find window by name";
 ok ref $app->get_window($window_id) eq "App::Alice::Window", "get window";
