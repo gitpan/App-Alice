@@ -1,5 +1,4 @@
 bin/alice
-bin/client
 Changes
 inc/Module/Install.pm
 inc/Module/Install/Base.pm
@@ -55,12 +54,14 @@ share/static/image/shadow-top.png
 share/static/image/smartTranscriptTab.png
 share/static/image/smartTranscriptTabActivity.png
 share/static/image/speech.png
+share/static/image/speecharrow.png
 share/static/iphone.css
 share/static/site.css
 share/static/site.js
 share/templates/announcement.html
 share/templates/event.html
-share/templates/index.html
+share/templates/index_footer.html
+share/templates/index_head.html
 share/templates/logs.html
 share/templates/message.html
 share/templates/new_server.html

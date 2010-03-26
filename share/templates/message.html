@@ -1,19 +1,18 @@
 ? my ($app, $msg) = @_;
-<li class="message <?= $msg->{nick} ?>
-  <? if ($msg->{self}) { ?> self<?}?>" id="<?= $msg->{msgid} ?>">
+? my $avatar = (!$msg->{consecutive} and $msg->{avatar} and $app->config->{avatars} eq "show") ? $msg->{avatar} : "";
+<li class="message <?= $msg->{highlight} ? "highlight " : "" ?><?= $avatar ? "avatar " : "" ?><?= $msg->{nick} ?><?= $msg->{self} ? " self" : "" ?><?= $msg->{consecutive} ? " consecutive" : "" ?><?= $msg->{monospaced} ? " monospace" : ""?>" id="<?= $msg->{msgid} ?>">
     <div class="left">
       <a href="javascript:alice.connection.requestWindow('<?= $msg->{nick} ?>','<?= $msg->{window}{id} ?>')" class="nick">
-        <? if ($msg->{avatar} and ($app->config->{avatars} eq "show")) { ?>
-          <img src="<?= $msg->{avatar} ?>" alt="<?= $msg->{nick} ?>" />
+        <? if ($avatar) { ?>
+          <img src="<?= $avatar ?>" alt="<?= $msg->{nick} ?>" />
           <span class="nickhint"><?= $msg->{nick} ?></span>
         <? } else { ?>
           <?= $msg->{nick} ?>
         <?}?>
       </a>
     </div>
-    <div class="msg<? if ($msg->{nick} eq "Shaniqua" or $msg->{nick} eq "root" or $msg->{nick} eq "p6eval" or $msg->{monospaced}) { ?> monospace<?}?>"><?= $msg->{html} ?></div>
-    <? if ($msg->{timestamp}) { ?>
+    <div class="msg"><?= $msg->{html} ?></div>
+    <? if (!$msg->{consecutive} and $msg->{timestamp}) { ?>
     <div class="timehint"><?= $msg->{timestamp} ?></div>
     <? } ?>
-  <hr />
 </li>

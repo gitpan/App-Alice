@@ -9,7 +9,6 @@ use Encode;
 
 has 'cl' => (
   is      => 'rw',
-  isa     => 'AnyEvent::IRC::Client|App::Alice::Test::MockIRC',
   default => sub {AnyEvent::IRC::Client->new},
 );
 
@@ -394,7 +393,8 @@ sub _join {
     $self->get_nick_info($nick)->{channels}{$channel} = '';
   }
   if ($is_self) {
-    $self->app->create_window($channel, $self);
+    my $window = $self->app->create_window($channel, $self);
+    $self->broadcast($window->join_action);
     # client library only sends WHO if the server doesn't
     # send hostnames with NAMES list (UHNAMES), we to WHO always
     $self->send_srv("WHO" => $channel) if $cl->isupport("UHNAMES");
@@ -493,6 +493,7 @@ sub irc_352 {
   utf8::decode($_) for ($channel, $user, $nick, $real);
   my $info = {
     IP       => $ip     || "",
+    user     => $user || "",
     server   => $server || "",
     real     => $real   || "",
     channels => {$channel => $flags},
@@ -514,7 +515,7 @@ sub irc_366 {
   my ($self, $cl, $msg) = @_;
   utf8::decode($msg->{params}[1]);
   if (my $window = $self->find_window($msg->{params}[1])) {
-    $self->broadcast($window->join_action);
+    $self->broadcast($window->nicks_action);
   }
 }
 
@@ -561,7 +562,8 @@ sub whois_table {
   my ($self, $nick) = @_;
   my $info = $self->get_nick_info($nick);
   return "No info for user \"$nick\"" if !$info;
-  return "real: $info->{real}\nhost: $info->{IP}\nserver: $info->{server}\nchannels: " .
+  return "real: $info->{real}\nuser: $info->{user}\n" .
+         "host: $info->{IP}\nserver: $info->{server}\nchannels: " .
          join " ", keys %{$info->{channels}};
 }
 

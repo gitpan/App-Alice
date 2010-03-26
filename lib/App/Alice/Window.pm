@@ -38,6 +38,11 @@ has title => (
   required => 1,
 );
 
+has previous_nick => (
+  is       => 'rw',
+  default  => "",
+);
+
 has topic => (
   is      => 'rw',
   isa     => 'HashRef[Str|Undef]',
@@ -70,7 +75,7 @@ has session => (
   default => sub {return shift->irc->alias}
 );
 
-has irc => (
+has _irc => (
   is       => 'ro',
   isa      => 'App::Alice::IRC',
   required => 1,
@@ -82,6 +87,19 @@ has app => (
   isa     => 'App::Alice',
   required => 1,
 );
+
+# move irc arg to _irc, which is wrapped in a method
+# because infowindow has logic to choose which irc
+# connection to return
+sub BUILDARGS {
+  my $class = shift;
+  my $args = ref $_[0] ? $_[0] : {@_};
+  $args->{_irc} = $args->{irc};
+  delete $args->{irc};
+  return $args;
+}
+
+sub irc { $_[0]->_irc }
 
 sub serialized {
   my ($self) = @_;
@@ -115,6 +133,7 @@ sub add_message {
 
 sub clear_buffer {
   my $self = shift;
+  $self->previous_nick("");
   $self->msgbuffer([]);
 }
 
@@ -183,7 +202,10 @@ sub format_event {
     timestamp => $self->timestamp,
     nicks     => [ $self->all_nicks ],
   };
-  $message->{full_html} = $self->app->render("event", $message);
+  $message->{html} = make_links_clickable(
+    $self->app->render("event", $message)
+  );
+  $self->previous_nick("");
   $self->add_message($message);
   return $message;
 }
@@ -192,6 +214,7 @@ sub format_message {
   my ($self, $nick, $body) = @_;
   $body = decode_utf8($body) unless utf8::is_utf8($body);
   my $html = IRC::Formatting::HTML->formatted_string_to_html($body);
+  $html = make_links_clickable($html);
   my $own_nick = $self->nick;
   my $message = {
     type      => "message",
@@ -199,15 +222,16 @@ sub format_message {
     nick      => $nick,
     avatar    => $self->irc->nick_avatar($nick),
     window    => $self->serialized,
-    body      => $body,
-    highlight => $body =~ /\b$own_nick\b/i ? 1 : 0,
+    highlight => ($own_nick ne $nick and $body) =~ /\b$own_nick\b/i ? 1 : 0,
     html      => encoded_string($html),
     self      => $own_nick eq $nick,
     msgid     => $self->app->next_msgid,
     timestamp => $self->timestamp,
+    monospaced => $self->app->is_monospace_nick($nick),
+    consecutive => $nick eq $self->previous_nick ? 1 : 0,
   };
-  $message->{full_html} = $self->app->render("message", $message);
-  $message->{html} = "$html";
+  $message->{html} = $self->app->render("message", $message);
+  $self->previous_nick($nick);
   $self->add_message($message);
   return $message;
 }
@@ -221,7 +245,8 @@ sub format_announcement {
     window  => $self->serialized,
     message => $msg,
   };
-  $message->{full_html} = $self->app->render('announcement', $message);
+  $message->{html} = $self->app->render('announcement', $message);
+  $self->previous_nick("");
   return $message;
 }
 
@@ -238,6 +263,12 @@ sub close_action {
 sub nick_table {
   my $self = shift;
   return _format_nick_table($self->all_nicks(1));
+}
+
+sub make_links_clickable {
+  my $html = shift;
+  $html =~ s/\b(([\w-]+:\/\/?|www[.])[^\s()<>]+(?:\([\w\d]+\)|([^[:punct:]\s]|\/)))/<a href="$1" target="_blank" rel="noreferrer">$1<\/a>/gi;
+  return $html;
 }
 
 sub _format_nick_table {

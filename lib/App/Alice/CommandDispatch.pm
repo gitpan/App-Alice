@@ -15,9 +15,8 @@ has 'handlers' => (
       {sub => 'nick',     re => qr{^/nick\s+(\S+)}},
       {sub => 'names',    re => qr{^/n(?:ames)?}, in_channel => 1},
       {sub => '_join',    re => qr{^/j(?:oin)?\s+$SRVOPT(.+)}},
-      {sub => 'part',     re => qr{^/part}, in_channel => 1},
       {sub => 'create',   re => qr{^/create\s+(\S+)}},
-      {sub => 'close',    re => qr{^/(?:close|wc)}},
+      {sub => 'close',    re => qr{^/(?:close|wc|part)}},
       {sub => 'clear',    re => qr{^/clear}},
       {sub => 'topic',    re => qr{^/topic(?:\s+(.+))?}, in_channel => 1},
       {sub => 'whois',    re => qr{^/whois\s+(\S+)}},
@@ -99,20 +98,17 @@ sub msg {
 
 sub _join {
   my ($self, $window, $channel, $network) = @_;
-  my $irc = $window->irc;
+  my $irc;
   if ($network and $self->app->has_irc($network)) {
     $irc = $self->app->get_irc($network);
+  } else {
+    $irc = $window->irc;
   }
   my @params = split /\s+/, $channel;
   if ($irc and $irc->cl->is_channel_name($params[0])) {
     $irc->log(info => "joining $params[0]");
     $irc->send_srv(JOIN => @params);
   }
-}
-
-sub part {
-  my ($self, $window) = @_;
-  $window->part if $window->is_channel;
 }
 
 sub close {

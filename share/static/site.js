@@ -20,8 +20,9 @@ if (window == window.parent) {
   alice.options = options;
  
   document.observe("dom:loaded", function () {
-    $$("tr.topic td").each(function (topic){
-      topic.innerHTML = Alice.makeLinksClickable(topic.innerHTML)});
+    $$('ul.messages li.avatar + li:not(.consecutive)').each(function (li) {
+      li.previous().setStyle({minHeight:"42px"});
+    });
     $$('#config_overlay option').each(function(opt){opt.selected = false});
     $('tab_overflow_overlay').observe("change", function (e) {
       var win = alice.getWindow($('tab_overflow_overlay').value);
@@ -38,8 +39,6 @@ if (window == window.parent) {
       }
       $$('#config_overlay option').each(function(opt){opt.selected = false});
     });
-    var width = document.viewport.getWidth();
-    $$('.messages').invoke('setStyle', {width: width+"px"});
     if (alice.activeWindow()) alice.activeWindow().input.focus()
  
     window.onkeydown = function (e) {
@@ -47,9 +46,10 @@ if (window == window.parent) {
         alice.activeWindow().input.focus()};
  
     window.onresize = function () {
-      if (alice.activeWindow()) alice.activeWindow().scrollToBottom()
-      var width = document.viewport.getWidth();
-      $$('.messages').invoke('setStyle', {width: width+"px"});
+      if (alice.activeWindow()) {
+        if (Prototype.Browser.Gecko) alice.activeWindow().resizeMessagearea();
+        alice.activeWindow().scrollToBottom();
+      }
     };
  
     window.status = " ";  
@@ -61,11 +61,13 @@ if (window == window.parent) {
     window.onblur = function () {alice.isFocused = false};
  
     Alice.makeSortable();
- 
-    if (Prototype.Browser.MobileSafari) {
-      setTimeout(function(){window.scrollTo(0,1)}, 5000);
-      $$('button').invoke('setStyle',
-        {display:'block',position:'absolute',right:'0px'});
+    
+    if (navigator.userAgent.match(/Chrome/)) {
+      $$('tr.input textarea').invoke('setStyle', {padding: '3px'});
+    }
+    if (Prototype.Browser.Gecko) {
+      alice.activeWindow().resizeMessagearea();
+      alice.activeWindow().scrollToBottom();
     }
   });
 }
@@ -109,9 +111,8 @@ function loadInlineImage(image) {
   image.style.display = 'block';
   image.style.visibility = 'visible';
   setTimeout(function () {
-    var messagelist = image.up("ul.messages");
+    var messagelist = image.up(".message_wrap");
     messagelist.scrollTop = messagelist.scrollHeight;
-    console.log("scrolling to bottom");
   }, 50);
 }
 

@@ -1,16 +1,21 @@
 ? my ($app, $window, @classes) = @_;
-? my $active = grep {$_ eq "active"} @classes;
+? use Text::MicroTemplate qw/encoded_string/;
 <div class="window <?= join " ", @classes ?>" id="<?= $window->id ?>">
   <table cellspacing="0" cellpadding="0">
     <tr class="topic">
-      <td id="<?= $window->id ?>_topic">
-        <?= $window->topic->{string} ?>
+      <td>
+        <div class="topic" id="<?= $window->id ?>_topic"><?= $window->topic->{string} ?></div>
       </td>
     </tr>
     <tr>
       <td valign="top">
+        <div class="message_wrap">
         <ul class="messages" id="<?= $window->id ?>_messages">
+          <? for (@{$window->msgbuffer}) { ?>
+            <?= encoded_string $_->{html} ?>
+          <? } ?>
         </ul>
+        </div>
       </td>
     </tr>
     <tr class="vert_dragger">
@@ -20,7 +25,7 @@
       <td id="<?= $window->id ?>_input">
         <form id="<?= $window->id ?>_form" autocomplete="off">
           <input type="hidden" name="source" value="<?= $window->id ?>" />
-          <button type="submit" style="display:none" id="<?= $window->id ?>_submit">Send</button>
+          <input type="submit" class="send" id="<?= $window->id ?>_submit" value="Send">
           <textarea name="msg" id="<?= $window->id ?>_msg" rows="1"></textarea>
         </form>
       </td>

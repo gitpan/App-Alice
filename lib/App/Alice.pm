@@ -14,7 +14,7 @@ use File::Copy;
 use Digest::MD5 qw/md5_hex/;
 use Encode;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 has condvar => (
   is       => 'rw',
@@ -99,7 +99,7 @@ has notifier => (
 );
 
 has history => (
-  is      => 'ro',
+  is      => 'rw',
   lazy    => 1,
   default => sub {
     my $self = shift;
@@ -218,6 +218,7 @@ sub init_shutdown {
   $self->{on_shutdown} = $cb;
   $self->shutting_down(1);
   $self->httpd->shutdown;
+  $self->history(undef);
   if (!$self->ircs) {
     $self->shutdown;
     return;
@@ -301,7 +302,7 @@ sub create_window {
 
 sub _build_window_id {
   my ($title, $connection_alias) = @_;
-  return "win_" . md5_hex(encode_utf8("$title-$connection_alias"));
+  return "win_" . md5_hex(encode_utf8(lc "$title-$connection_alias"));
 }
 
 sub find_or_create_window {
@@ -380,7 +381,7 @@ sub format_info {
 sub broadcast {
   my ($self, @messages) = @_;
   # add any highlighted messages to the log window
-  push @messages, map {$self->format_info($_->{nick}, $_->{body}, 1)}
+  push @messages, map {$self->info_window->copy_message($_)}
                   grep {$_->{highlight}} @messages;
   
   $self->httpd->broadcast(@messages);
@@ -408,6 +409,14 @@ sub format_notice {
 sub render {
   my ($self, $template, @data) = @_;
   return $self->template->render_file("$template.html", $self, @data)->as_string;
+}
+
+sub is_monospace_nick {
+  my ($self, $nick) = @_;
+  for (@{$self->config->monospace_nicks}) {
+    return 1 if $_ eq $nick;
+  }
+  return 0;
 }
 
 sub is_ignore {

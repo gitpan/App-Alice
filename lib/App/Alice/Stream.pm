@@ -2,7 +2,11 @@ package App::Alice::Stream;
 
 use JSON;
 use Time::HiRes qw/time/;
+use Try::Tiny;
 use Any::Moose;
+
+use strict;
+use warnings;
 
 has queue => (
   is  => 'rw',
@@ -14,7 +18,7 @@ sub clear_queue {$_[0]->queue([])}
 sub enqueue {push @{shift->queue}, @_}
 sub queue_empty {return @{$_[0]->queue} == 0}
 
-has [qw/offset last_send/]=> (
+has [qw/offset last_send start_time/]=> (
   is  => 'rw',
   isa => 'Num',
   default => 0,
@@ -36,9 +40,8 @@ has 'timer' => (
   is  => 'rw',
 );
 
-has 'request' => (
+has 'writer' => (
   is  => 'rw',
-  isa => 'AnyEvent::HTTPD::Request|Undef',
   required => 1,
 );
 
@@ -51,31 +54,38 @@ has callback => (
 sub BUILD {
   my $self = shift;
   my $local_time = time;
-  my $remote_time = $self->request->parm('t') || $local_time;
+  my $remote_time = $self->start_time || $local_time;
   $self->offset($local_time - $remote_time);
-  $self->request->respond([
-    200, 'ok', {'Content-Type' => 'multipart/mixed; boundary='.$self->seperator.'; charset=utf-8'},
-    sub {ref $_[0] ? $self->callback($_[0]) : $self->disconnected(1)}
-  ]);
-  $self->broadcast;
+  my $writer = $self->writer->(
+    [200, ['Content-Type' => 'multipart/mixed; boundary='.$self->seperator.'; charset=utf-8']]
+  );
+  $self->writer($writer);
+  $self->_send;
 }
 
-sub broadcast {
+sub _send {
   my $self = shift;
+  try   { $self->send }
+  catch { $self->close };
+}
+
+sub send {
+  my ($self, @messages) = @_;
+  die "Sending on a disconnected stream" if $self->disconnected;
+  $self->enqueue(@messages) if @messages;
   return if $self->delayed or $self->queue_empty;
   if (my $delay = $self->flooded) {
     $self->delay($delay);
     return;
   }
-  $self->callback->( $self->to_string );
+  $self->writer->write( $self->to_string );
   $self->flush;
 }
 
 sub close {
   my $self = shift;
+  $self->writer->close;
   $self->timer(undef);
-  $self->callback() if $self->callback;
-  $self->request(undef);
   $self->disconnected(1);
 }
 
@@ -96,7 +106,7 @@ sub delay {
     cb    => sub {
       $self->delayed(0);
       $self->timer(undef);
-      $self->broadcast;
+      $self->_send;
     },
   ));
 }
