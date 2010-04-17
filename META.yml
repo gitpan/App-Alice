@@ -29,9 +29,10 @@ requires:
   DBD::SQLite: 0
   File::Copy: 0
   File::ShareDir: 0.01
-  IRC::Formatting::HTML: 0.14
+  IRC::Formatting::HTML: 0.15
   JSON: 2.12
   Plack: 0
+  Plack::Session: 0
   SQL::Abstract: 0
   Text::MicroTemplate: 0.09
   Try::Tiny: 0
@@ -39,4 +40,4 @@ requires:
   perl: 5.8.0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.12
+version: 0.13

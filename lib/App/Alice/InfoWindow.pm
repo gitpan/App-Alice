@@ -8,11 +8,9 @@ use Text::MicroTemplate qw/encoded_string/;
 extends 'App::Alice::Window';
 
 has '+is_channel' => (lazy => 0, default => 0);
-has '+id' => (default => 'info');
 has '+title' => (required => 0, default => 'info');
-has '+session' => ( isa => 'Undef', default => undef);
+has '+session' => (default => "");
 has 'topic' => (is => 'ro', isa => 'HashRef', default => sub {{string => ''}});
-has '+buffersize' => (default => 300);
 has '+type' => (lazy => 0, default => 'info');
 has '+_irc' => (required => 0, isa => 'Any');
 
@@ -25,8 +23,7 @@ sub irc {
 }
 
 sub format_message {
-  my ($self, $from, $body, $highlight, $monospaced) = @_;
-  $highlight = 0 unless $highlight;
+  my ($self, $from, $body, %options) = @_;
   my $html = IRC::Formatting::HTML->formatted_string_to_html($body);
   my $message = {
     type   => "message",
@@ -34,16 +31,15 @@ sub format_message {
     nick   => $from,
     window => $self->serialized,
     html   => encoded_string($html),
-    self   => 0,
-    hightlight => 0,
+    self   => $options{self} ? 1 : 0,
+    hightlight => $options{highlight} ? 1 : 0,
     msgid  => $self->app->next_msgid,
     timestamp => $self->timestamp,
-    monospaced => $monospaced ? 1 : 0,
-    consecutive => $from eq $self->previous_nick ? 1 : 0,
+    monospaced => $options{mono} ? 1 : 0,
+    consecutive => $from eq $self->buffer->previous_nick ? 1 : 0,
   };
   $message->{html} = $self->app->render("message", $message);
-  $self->previous_nick($from);
-  $self->add_message($message);
+  $self->buffer->add($message);
   return $message;
 }
 
@@ -52,7 +48,7 @@ sub copy_message {
   my $copy = {
     type   => "message",
     event  => "say",
-    from   => $msg->{nick},
+    nick   => $msg->{nick},
     window => $self->serialized,
     html   => $msg->{html},
     self   => $msg->{self},
@@ -60,10 +56,14 @@ sub copy_message {
     msgid  => $self->app->next_msgid,
     timestamp => $msg->{timestamp},
     monospaced => $msg->{monospaced},
-    consecutive => $msg->{nick} eq $self->previous_nick ? 1 : 0,
+    consecutive => $msg->{nick} eq $self->buffer->previous_nick ? 1 : 0,
   };
-  $self->previous_nick($copy->{from});
-  $self->add_message($copy);
+  if ($msg->{consecutive} and !$copy->{consecutive}) {
+    $copy->{html} =~ s/(<li class="[^"]*)consecutive/$1/;
+  } elsif (!$msg->{consecutive} and $copy->{consecutive}) {
+    $copy->{html} =~ s/(<li class=")/$1consecutive /;
+  }
+  $self->buffer->add($copy);
   return $copy;
 }
 

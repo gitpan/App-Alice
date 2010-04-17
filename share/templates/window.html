@@ -1,6 +1,5 @@
-? my ($app, $window, @classes) = @_;
-? use Text::MicroTemplate qw/encoded_string/;
-<div class="window <?= join " ", @classes ?>" id="<?= $window->id ?>">
+? my ($app, $window) = @_;
+<div class="window<?= $window->{active} ? " active" : "" ?>" id="<?= $window->id ?>">
   <table cellspacing="0" cellpadding="0">
     <tr class="topic">
       <td>
@@ -11,9 +10,6 @@
       <td valign="top">
         <div class="message_wrap">
         <ul class="messages" id="<?= $window->id ?>_messages">
-          <? for (@{$window->msgbuffer}) { ?>
-            <?= encoded_string $_->{html} ?>
-          <? } ?>
         </ul>
         </div>
       </td>

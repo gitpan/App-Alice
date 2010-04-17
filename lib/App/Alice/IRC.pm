@@ -28,15 +28,9 @@ has 'nick_cached' => (
   },
 );
 
-has 'config' => (
-  isa      => 'HashRef',
-  is       => 'rw',
-  lazy     => 1,
-  default  => sub {
-    my $self = shift;
-    return $self->app->config->{$self->alias};
-  },
-);
+sub config {
+  $_[0]->app->config->servers->{$_[0]->alias};
+}
 
 has 'app' => (
   isa      => 'App::Alice',
@@ -76,9 +70,21 @@ sub all_nicks {keys %{$_[0]->nicks}}
 sub all_nick_info {values %{$_[0]->nicks}}
 sub set_nick_info {$_[0]->nicks->{$_[1]} = $_[2]}
 
+has whois_cbs => (
+  is        => 'rw',
+  isa       => 'HashRef[CodeRef]',
+  default   => sub {{}},
+);
+
+sub add_whois_cb {
+  my ($self, $nick, $cb) = @_;
+  $self->whois_cbs->{$nick} = $cb;
+  $self->send_srv(WHO => $nick);
+}
+
 sub BUILD {
   my $self = shift;
-  $self->cl->enable_ssl(1) if $self->config->{ssl};
+  $self->cl->enable_ssl if $self->config->{ssl};
   $self->disabled(1) unless $self->config->{autoconnect};
   $self->cl->reg_cb(
     registered     => sub{$self->registered($_)},
@@ -99,6 +105,7 @@ sub BUILD {
     irc_372        => sub{$self->mlog(debug => $_[1]->{params}[-1])}, # MOTD info
     irc_377        => sub{$self->mlog(debug => $_[1]->{params}[-1])}, # MOTD info
     irc_378        => sub{$self->mlog(debug => $_[1]->{params}[-1])}, # MOTD info
+    irc_401        => sub{$self->irc_401(@_)},
     irc_432        => sub{$self->log(debug => $_[1]->{params}[-1])}, # Bad nick
     irc_433        => sub{$self->log(debug => $_[1]->{params}[-1])}, # Bad nick
     irc_464        => sub{$self->disconnect("bad USER/PASS")},
@@ -147,13 +154,13 @@ sub log {
 
 sub mlog {
   my ($self, $level, @messages) = @_;
-  $self->broadcast(map {$self->format_info($_, 1)} @messages);
+  $self->broadcast(map {$self->format_info($_, mono => 1)} @messages);
   $self->app->log($level => "[".$self->alias . "] $_") for @messages;
 }
 
 sub format_info {
-  my ($self, $message, $monospaced) = @_;
-  $self->app->format_info($self->alias, $message, 0, $monospaced);
+  my ($self, $message, %options) = @_;
+  $self->app->format_info($self->alias, $message, %options);
 }
 
 sub window {
@@ -179,7 +186,7 @@ sub nick {
 sub windows {
   my $self = shift;
   return grep
-    {$_->id ne "info" && $_->irc->alias eq $self->alias}
+    {$_->type ne "info" && $_->irc->alias eq $self->alias}
     $self->app->windows;
 }
 
@@ -191,6 +198,7 @@ sub channels {
 sub connect {
   my $self = shift;
   $self->disabled(0);
+  $self->cl->{enable_ssl} = $self->config->{ssl} ? 1 : 0;
   $self->increase_reconnect_count;
   if (!$self->config->{host} or !$self->config->{port}) {
     $self->log(info => "can't connect: missing either host or port");
@@ -295,7 +303,7 @@ sub disconnected {
   $self->is_connected(0);
   
   if ($self->app->shutting_down and !$self->app->connected_ircs) {
-    $self->app->shutdown;
+    $self->shutdown;
     return;
   }
   
@@ -311,7 +319,9 @@ sub disconnect {
   my ($self, $msg) = @_;
 
   $self->disabled(1);
-  $self->app->remove_window($_) for $self->windows;
+  if (!$self->app->shutting_down) {
+    $self->app->remove_window($_) for $self->windows; 
+  }
 
   $msg ||= $self->app->config->quitmsg;
   $self->log(debug => "disconnecting: $msg") if $msg;
@@ -509,6 +519,11 @@ sub irc_352 {
   }
   
   $self->set_nick_info($nick, $info);
+
+  if ($self->whois_cbs->{$nick}) {
+    $self->whois_cbs->{$nick}->();
+    delete $self->whois_cbs->{$nick};
+  }
 }
 
 sub irc_366 {
@@ -516,6 +531,14 @@ sub irc_366 {
   utf8::decode($msg->{params}[1]);
   if (my $window = $self->find_window($msg->{params}[1])) {
     $self->broadcast($window->nicks_action);
+  }
+}
+
+sub irc_401 {
+  my ($self, $cl, $msg) = @_;
+  utf8::decode($msg->{params}[1]);
+  if (my $window = $self->find_window($msg->{params}[1])) {
+    $self->broadcast($window->format_announcement("No such nick."));
   }
 }
 

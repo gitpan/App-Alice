@@ -5596,13 +5596,48 @@ Form.EventObserver = Class.create(Abstract.EventObserver, {
     return Event.extend(event);
   }
 
+  Event.Handler = Class.create({
+    initialize: function(element, eventName, selector, callback) {
+      this.element   = $(element);
+      this.eventName = eventName;
+      this.selector  = selector;
+      this.callback  = callback;
+      this.handler   = this.handleEvent.bind(this);
+    },
+
+    start: function() {
+      Event.observe(this.element, this.eventName, this.handler);
+      return this;
+    },
+
+    stop: function() {
+      Event.stopObserving(this.element, this.eventName, this.handler);
+      return this;
+    },
+
+    handleEvent: function(event) {
+      var element = this.selector ? event.findElement(this.selector) :
+       this.element;
+      if (element) this.callback.call(element, event, element);
+    }
+  });
+
+  function on(element, eventName, selector, callback) {
+    element = $(element);
+    if (Object.isFunction(selector) && Object.isUndefined(callback)) {
+      callback = selector, selector = null;
+    }
+
+    return new Event.Handler(element, eventName, selector, callback).start();
+  }
 
   Object.extend(Event, Event.Methods);
 
   Object.extend(Event, {
     fire:          fire,
     observe:       observe,
-    stopObserving: stopObserving
+    stopObserving: stopObserving,
+    on:            on
   });
 
   Element.addMethods({
@@ -5610,7 +5645,9 @@ Form.EventObserver = Class.create(Abstract.EventObserver, {
 
     observe:       observe,
 
-    stopObserving: stopObserving
+    stopObserving: stopObserving,
+
+    on:            on
   });
 
   Object.extend(document, {
@@ -5619,6 +5656,8 @@ Form.EventObserver = Class.create(Abstract.EventObserver, {
     observe:       observe.methodize(),
 
     stopObserving: stopObserving.methodize(),
+
+    on:            on.methodize(),
 
     loaded:        false
   });
@@ -8164,6 +8203,352 @@ shortcut = {
 		else ele['on'+type] = false;
 	}
 };
+/**
+ *
+ * Find more about the scrolling function at
+ * http://cubiq.org/scrolling-div-for-mobile-webkit-turns-3/16
+ *
+ * Copyright (c) 2009 Matteo Spinelli, http://cubiq.org/
+ * Released under MIT license
+ * http://cubiq.org/dropbox/mit-license.txt
+ *
+ * Version 3.0beta4 - Last updated: 2010.04.02
+ *
+ */
+
+function iScroll (el, options) {
+	this.element = typeof el == 'object' ? el : document.getElementById(el);
+	this.wrapper = this.element.parentNode;
+
+	this.wrapper.style.overflow = 'hidden';
+	this.wrapper.style.position = 'relative';
+	this.element.style.webkitTransitionProperty = '-webkit-transform';
+	this.element.style.webkitTransitionTimingFunction = 'cubic-bezier(0,0,0.25,1)';
+	this.element.style.webkitTransitionDuration = '0';
+	this.element.style.webkitTransform = 'translate3d(0,0,0)';
+
+	this.options = {
+		bounce: true,
+		hScrollBar: true,
+		vScrollBar: true
+	};
+
+	if (typeof options == 'object') {
+		for (var i in options) {
+			this.options[i] = options[i];
+		}
+	}
+
+	this.refresh();
+
+	this.element.addEventListener('touchstart', this);
+	this.element.addEventListener('touchmove', this);
+	this.element.addEventListener('touchend', this);
+	window.addEventListener('orientationchange', this);
+}
+
+iScroll.prototype = {
+	_x: 0,
+	_y: 0,
+
+	handleEvent: function (e) {
+		switch (e.type) {
+			case 'touchstart': this.onTouchStart(e); break;
+			case 'touchmove': this.onTouchMove(e); break;
+			case 'touchend': this.onTouchEnd(e); break;
+			case 'webkitTransitionEnd': this.onTransitionEnd(e); break;
+			case 'orientationchange': this.refresh(); this.scrollTo(0,0,'0'); break;
+		}
+	},
+
+	refresh: function () {
+		this.element.style.webkitTransitionDuration = '0';
+		this.scrollWidth = this.wrapper.clientWidth;
+		this.scrollHeight = this.wrapper.clientHeight;
+		this.maxScrollX = this.scrollWidth - this.element.offsetWidth;
+		this.maxScrollY = this.scrollHeight - this.element.offsetHeight;
+		this.scrollX = this.element.offsetWidth > this.scrollWidth ? true : false;
+		this.scrollY = this.element.offsetHeight > this.scrollHeight ? true : false;
+
+		if (this.options.hScrollBar && this.scrollX) {
+			this.scrollBarX = new scrollbar('horizontal', this.wrapper);
+			this.scrollBarX.init(this.scrollWidth, this.element.offsetWidth);
+		} else if (this.scrollBarX) {
+			this.scrollBarX = this.scrollBarX.remove();
+		}
+
+		if (this.options.vScrollBar && this.scrollY) {
+			this.scrollBarY = new scrollbar('vertical', this.wrapper);
+			this.scrollBarY.init(this.scrollHeight, this.element.offsetHeight);
+		} else if (this.scrollBarY) {
+			this.scrollBarY = this.scrollBarY.remove();
+		}
+	},
+
+	get x() {
+		return this._x;
+	},
+
+	get y() {
+		return this._y;
+	},
+
+	setPosition: function (x, y) {
+		this._x = x !== null ? x : this._x;
+		this._y = y !== null ? y : this._y;
+
+		this.element.style.webkitTransform = 'translate3d(' + this._x + 'px,' + this._y + 'px,0)';
+
+		if (this.scrollBarX) {
+			this.scrollBarX.setPosition(this.scrollBarX.maxScroll / this.maxScrollX * this._x);
+		}
+		if (this.scrollBarY) {
+			this.scrollBarY.setPosition(this.scrollBarY.maxScroll / this.maxScrollY * this._y);
+		}
+	},
+
+	onTouchStart: function(e) {
+	    if (e.targetTouches.length != 1) {
+	        return false;
+        }
+
+		e.preventDefault();
+		e.stopPropagation();
+
+		this.element.style.webkitTransitionDuration = '0';
+
+		if (this.scrollBarX) {
+			this.scrollBarX.bar.style.webkitTransitionDuration = '0, 250ms';
+		}
+		if (this.scrollBarY) {
+			this.scrollBarY.bar.style.webkitTransitionDuration = '0, 250ms';
+		}
+
+		var theTransform = new WebKitCSSMatrix(window.getComputedStyle(this.element).webkitTransform);
+		if (theTransform.m41 != this.x || theTransform.m42 != this.y) {
+			this.setPosition(theTransform.m41, theTransform.m42);
+		}
+
+		this.touchStartX = e.touches[0].pageX;
+		this.scrollStartX = this.x;
+
+		this.touchStartY = e.touches[0].pageY;
+		this.scrollStartY = this.y;
+
+		this.scrollStartTime = e.timeStamp;
+		this.moved = false;
+	},
+
+	onTouchMove: function(e) {
+		if (e.targetTouches.length != 1) {
+			return false;
+		}
+
+		var leftDelta = this.scrollX === true ? e.touches[0].pageX - this.touchStartX : 0;
+		var topDelta = this.scrollY === true ? e.touches[0].pageY - this.touchStartY : 0;
+
+		if (this.x > 0 || this.x < this.maxScrollX) {
+			leftDelta = Math.round(leftDelta / 4);		// Slow down if outside of the boundaries
+		}
+
+		if (this.y > 0 || this.y < this.maxScrollY) {
+			topDelta = Math.round(topDelta / 4);		// Slow down if outside of the boundaries
+		}
+
+		if (this.scrollBarX && !this.scrollBarX.visible) {
+			this.scrollBarX.show();
+		}
+		if (this.scrollBarY && !this.scrollBarY.visible) {
+			this.scrollBarY.show();
+		}
+
+		this.setPosition(this.x + leftDelta, this.y + topDelta);
+
+		this.touchStartX = e.touches[0].pageX;
+		this.touchStartY = e.touches[0].pageY;
+		this.moved = true;
+
+		if( e.timeStamp-this.scrollStartTime > 250 ) {
+			this.scrollStartX = this.x;
+			this.scrollStartY = this.y;
+			this.scrollStartTime = e.timeStamp;
+		}
+	},
+
+	onTouchEnd: function(e) {
+		if (e.targetTouches.length > 0) {
+			return false;
+		}
+
+		if (!this.moved) {
+			var theEvent = document.createEvent('MouseEvents');
+			theEvent.initMouseEvent("click", true, true, document.defaultView, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, null);
+			e.changedTouches[0].target.dispatchEvent(theEvent);
+			return false;
+		}
+
+		var time = e.timeStamp - this.scrollStartTime;
+
+		var momentumX = this.scrollX === true
+			? this.momentum(this.x - this.scrollStartX,
+							time,
+							-this.x + 50,
+							this.x + this.element.offsetWidth - this.scrollWidth + 50)
+			: { dist: 0, time: 0 };
+
+		var momentumY = this.scrollY === true
+			? this.momentum(this.y - this.scrollStartY,
+							time,
+							 -this.y + /*this.scrollHeight/3*/ 50,
+							this.y + this.element.offsetHeight - this.scrollHeight + /*this.scrollHeight/3*/ 50)
+			: { dist: 0, time: 0 };
+
+		if (!momentumX.dist && !momentumY.dist) {
+			this.onTransitionEnd();	// I know, I know... This is lame
+			return false;
+		}
+
+		var newDuration = Math.max(momentumX.time, momentumY.time);
+		var newPositionX = this.x + momentumX.dist;
+		var newPositionY = this.y + momentumY.dist;
+
+		this.element.addEventListener('webkitTransitionEnd', this);
+
+		this.scrollTo(newPositionX, newPositionY, newDuration + 'ms');
+
+		if (this.scrollBarX) {
+			this.scrollBarX.scrollTo(this.scrollBarX.maxScroll / this.maxScrollX * newPositionX, newDuration + 'ms');
+		}
+		if (this.scrollBarY) {
+			this.scrollBarY.scrollTo(this.scrollBarY.maxScroll / this.maxScrollY * newPositionY, newDuration + 'ms');
+		}
+	},
+
+	onTransitionEnd: function () {
+		this.element.removeEventListener('webkitTransitionEnd', this);
+		this.resetPosition();
+
+		if (this.scrollBarX) {
+			this.scrollBarX.hide();
+		}
+		if (this.scrollBarY) {
+			this.scrollBarY.hide();
+		}
+	},
+
+	resetPosition: function () {
+		var resetX = resetY = null;
+		if (this.x > 0 || this.x < this.maxScrollX) {
+			resetX = this.x >= 0 ? 0 : this.maxScrollX;
+		}
+
+		if (this.y > 0 || this.y < this.maxScrollY) {
+			resetY = this.y >= 0 ? 0 : this.maxScrollY;
+		}
+
+		if (resetX !== null || resetY !== null) {
+			this.scrollTo(resetX, resetY, '500ms');
+
+			if (this.scrollBarX) {
+				this.scrollBarX.scrollTo(this.scrollBarX.maxScroll / this.maxScrollX * (resetX || this.x), '500ms');
+			}
+			if (this.scrollBarY) {
+				this.scrollBarY.scrollTo(this.scrollBarY.maxScroll / this.maxScrollY * (resetY || this.y), '500ms');
+			}
+		}
+	},
+
+	scrollTo: function (destX, destY, runtime) {
+		this.element.style.webkitTransitionDuration = runtime || '400ms';
+		this.setPosition(destX, destY);
+	},
+
+	momentum: function (dist, time, maxDist1, maxDist2) {
+		friction = 0.1;
+		deceleration = 1.5;
+
+		var speed = Math.abs(dist) / time * 1000;
+		var newDist = speed * speed / (20 * friction) / 1000;
+
+		if (dist > 0 && maxDist1 !== undefined && newDist > maxDist1) {
+			speed = speed * maxDist1 / newDist;
+			newDist = maxDist1;
+		}
+		if (dist < 0 && maxDist2 !== undefined && newDist > maxDist2) {
+			speed = speed * maxDist2 / newDist;
+			newDist = maxDist2;
+		}
+
+		newDist = newDist * (dist < 0 ? -1 : 1);
+
+		var newTime = -speed / -deceleration;
+		if (newTime < 1) {	// We can't go back in time
+			newTime = 1;
+		}
+
+		return { dist: Math.round(newDist), time: Math.round(newTime) };
+	}
+};
+
+var scrollbar = function (dir, wrapper) {
+	this.dir = dir;
+	this.bar = document.createElement('div');
+	this.bar.className = 'scrollbar ' + dir;
+	this.bar.style.webkitTransitionTimingFunction = 'cubic-bezier(0,0,0.25,1)';
+	this.bar.style.webkitTransform = 'translate3d(0,0,0)';
+	this.bar.style.webkitTransitionProperty = '-webkit-transform,opacity';
+	this.bar.style.webkitTransitionDuration = '0,250ms';
+	this.bar.style.pointerEvents = 'none';
+	this.bar.style.opacity = '0';
+
+	wrapper.appendChild(this.bar);
+}
+
+scrollbar.prototype = {
+	size: 0,
+	maxSize: 0,
+	maxScroll: 0,
+	visible: false,
+
+	init: function (scroll, size) {
+		var offset = this.dir == 'horizontal' ? this.bar.offsetWidth - this.bar.clientWidth : this.bar.offsetHeight - this.bar.clientHeight;
+		this.maxSize = scroll - 8;		// 8 = distance from top + distance from bottom
+		this.size = Math.round(this.maxSize * this.maxSize / size) + offset;
+		this.maxScroll = this.maxSize - this.size;
+		this.bar.style[this.dir == 'horizontal' ? 'width' : 'height'] = (this.size - offset) + 'px';
+	},
+
+	setPosition: function (pos) {
+		if (pos < 0) {
+			pos = 0;
+		} else if (pos > this.maxScroll) {
+			pos = this.maxScroll;
+		}
+
+		pos = this.dir == 'horizontal' ? 'translate3d(' + Math.round(pos) + 'px,0,0)' : 'translate3d(0,' + Math.round(pos) + 'px,0)';
+		this.bar.style.webkitTransform = pos;
+	},
+
+	scrollTo: function (pos, runtime) {
+		this.bar.style.webkitTransitionDuration = (runtime || '400ms') + ',250ms';
+		this.setPosition(pos);
+	},
+
+	show: function () {
+		this.visible = true;
+		this.bar.style.opacity = '1';
+	},
+
+	hide: function () {
+		this.visible = false;
+		this.bar.style.opacity = '0';
+	},
+
+	remove: function () {
+		this.bar.parentNode.removeChild(this.bar);
+		return null;
+	}
+};
 
 var Alice = { };
 
@@ -8187,7 +8572,7 @@ Object.extend(Alice, {
     if (!window.fluid) return;
     window.fluid.showGrowlNotification({
         title: message.window.title + ": " + message.nick,
-        description: message.body,
+        description: message.html.stripTags(),
         priority: 1,
         sticky: false,
         identifier: message.msgid
@@ -8239,6 +8624,43 @@ Alice.Application = Class.create({
     this.monospaceNicks = ['Shaniqua', 'root', 'p6eval'];
     this.keyboard = new Alice.Keyboard(this);
     setTimeout(this.connection.connect.bind(this.connection), 1000);
+  },
+
+  actionHandlers: {
+    join: function (action) {
+      var win = this.getWindow(action['window'].id);
+      if (!win) {
+        this.insertWindow(action['window'].id, action.html);
+        win = new Alice.Window(this, action['window'].id, action['window'].title, false);
+        this.addWindow(win);
+      } else {
+        win.enable();
+        win.nicks = action.nicks;
+      }
+    },
+    part: function (action) {
+      this.closeWindow(action['window'].id);
+    },
+    nicks: function (action) {
+      var win = this.getWindow(action['window'].id);
+      if (win) win.nicks = action.nicks;
+    },
+    alert: function (action) {
+      this.activeWindow().showAlert(action['body']);
+    },
+    clear: function (action) {
+      var win = this.getWindow(action['window'].id);
+      if (win) {
+        win.messages.down("ul").update("");
+        win.lastNick = "";
+      }
+    },
+    disconnect: function (action) {
+      var win = this.getWindow(action['window'].id);
+      if (win) {
+        win.disable();
+      }
+    }
   },
 
   toggleConfig: function(e) {
@@ -8375,32 +8797,8 @@ Alice.Application = Class.create({
   },
 
   handleAction: function(action) {
-    switch (action.event) {
-      case "join":
-        this.insertWindow(action['window'].id, action.html);
-        var win = new Alice.Window(this, action['window'].id, action['window'].title, false);
-        win.nicks = action.nicks;
-        this.addWindow(win);
-        break;
-      case "part":
-        this.closeWindow(action['window'].id);
-        break;
-      case "nicks":
-        var win = this.getWindow(action['window'].id);
-        if (win) win.nicks = action.nicks;
-        break;
-      case "notice":
-        this.activeWindow().addMessage(action);
-        break;
-      case "clear":
-        var win = this.getWindow(action['window'].id);
-        if (win) {
-          win.messages.down("ul").update("");
-          win.lastNick = "";
-        }
-        break;
-      default:
-        break;
+    if (this.actionHandlers[action.event]) {
+      this.actionHandlers[action.event].call(this,action);
     }
   },
 
@@ -8427,6 +8825,8 @@ Alice.Connection = Class.create({
     this.request = null;
     this.seperator = "--xalicex\n";
     this.msgid = 0;
+    this.reconnect_count = 0;
+    this.reconnecting = false;
   },
 
   closeConnection: function() {
@@ -8437,8 +8837,14 @@ Alice.Connection = Class.create({
   },
 
   connect: function() {
+    if (this.reconnect_count > 3) {
+      this.aborting = true;
+      this.application.activeWindow().showAlert("Alice server is not responding (<a href='javascript:alice.connection.reconnect()'>reconnect</a>)");
+      return;
+    }
     this.closeConnection();
     this.len = 0;
+    this.reconnect_count++;
     var now = new Date();
     this.request = new Ajax.Request('/stream', {
       method: 'get',
@@ -8447,6 +8853,12 @@ Alice.Connection = Class.create({
       onInteractive: this.handleUpdate.bind(this),
       onComplete: this.handleComplete.bind(this)
     });
+  },
+
+  reconnect: function () {
+    this.reconnecting = true;
+    this.reconnect_count = 0;
+    this.connect();
   },
 
   handleException: function(request, exception) {
@@ -8460,6 +8872,11 @@ Alice.Connection = Class.create({
   },
 
   handleUpdate: function(transport) {
+    if (this.reconnecting) {
+      this.application.activeWindow().showHappyAlert("Reconnected to the Alice server");
+      this.reconnecting = false;
+    }
+    this.reconnect_count = 0;
     var time = new Date();
     var data = transport.responseText.slice(this.len);
     var start, end;
@@ -8559,7 +8976,6 @@ Alice.Window = Class.create({
     this.title = title;
     this.id = this.element.identify();
     this.active = active;
-
     this.tab = $(this.id + "_tab");
     this.input = new Alice.Input(this, this.id + "_msg");
     this.tabButton = $(this.id + "_tab_button");
@@ -8572,13 +8988,14 @@ Alice.Window = Class.create({
     this.visibleNick = "";
     this.visibleNickTimeout = "";
     this.nicks = [];
+    this.messageLimit = 250;
 
     this.submit.observe("click", function (e) {this.input.send(); e.stop()}.bind(this));
     this.tab.observe("mousedown", function(e) {
       if (!this.active) {this.focus(); this.active = false}}.bind(this));
     this.tab.observe("click", function(e) {this.active = true}.bind(this));
     this.tabButton.observe("click", function(e) {if (this.active) this.close()}.bind(this));
-    document.observe("mouseover", this.showNick.bind(this));
+    this.messages.observe("mouseover", this.showNick.bind(this));
     this.scrollToBottom(true);
     document.observe("dom:loaded", function () {
       setTimeout(function () {
@@ -8587,6 +9004,15 @@ Alice.Window = Class.create({
         });
       }.bind(this), 1000);
     }.bind(this));
+    if (navigator.userAgent.match(/Chrome/)) {
+      $$('tr.input textarea').invoke('setStyle', {padding: '3px'});
+    } else if (Prototype.Browser.Gecko) {
+      this.resizeMessagearea();
+      this.scrollToBottom();
+    } else if (Prototype.Browser.MobileSafari) {
+      this.messageLimit = 50;
+      this.messages.select("li").reverse().slice(50).invoke("remove");
+    }
   },
 
   isTabWrapped: function() {
@@ -8695,6 +9121,15 @@ Alice.Window = Class.create({
     this.tabOverflowButton.removeClassName("unread");
   },
 
+  disable: function () {
+    this.markRead();
+    this.tab.addClassName('disabled');
+  },
+
+  enable: function () {
+    this.tab.removeClassName('disabled');
+  },
+
   close: function(event) {
     this.application.removeWindow(this);
     this.tab.remove();
@@ -8719,11 +9154,32 @@ Alice.Window = Class.create({
     });
   },
 
+  showHappyAlert: function (message) {
+    this.messages.down('ul').insert(
+      "<li class='event happynotice'><div class='msg'>"+message+"</div></li>"
+    );
+    this.scrollToBottom();
+  },
+
+  showAlert: function (message) {
+    this.messages.down('ul').insert(
+      "<li class='event notice'><div class='msg'>"+message+"</div></li>"
+    );
+    this.scrollToBottom();
+  },
+
   addMessage: function(message) {
     if (!message.html) return;
 
     this.messages.down('ul').insert(Alice.uncacheGravatar(message.html));
     var li = this.messages.down('li:last-child');
+
+    if (!message.consecutive) {
+      var prev = li.previous();
+      if (prev && prev.hasClassName("avatar") && !prev.hasClassName("consecutive"))
+        prev.setStyle({minHeight:"42px"});
+    }
+
     if (message.event == "say") {
       var msg = li.down('div.msg');
       msg.innerHTML = this.application.applyFilters(msg.innerHTML);
@@ -8740,12 +9196,8 @@ Alice.Window = Class.create({
       }
 
       if (message.consecutive) {
-        var avatar = li.previous(".avatar");
+        var avatar = li.previous(".avatar:not(.consecutive)");
         if (avatar) avatar.down(".timehint").innerHTML = message.timestamp;
-      }
-      else {
-        var prev = li.previous();
-        if (prev && prev.hasClassName("avatar")) prev.setStyle({minHeight:"42px"});
       }
     }
     else if (message.event == "topic") {
@@ -8772,7 +9224,7 @@ Alice.Window = Class.create({
     }
 
     var messages = this.messages.childElements();
-    if (messages.length > 250) messages.first().remove();
+    if (messages.length > this.messageLimit) messages.first().remove();
 
     this.element.redraw();
   },
@@ -8809,6 +9261,7 @@ Alice.Input = Class.create({
     this.element.observe("keypress", this.onKeyPress.bind(this));
     this.element.observe("blur", this.onBlur.bind(this));
 
+    this.element.observe("keydown", this.resize.bind(this));
     this.element.observe("cut", this.resize.bind(this));
     this.element.observe("paste", this.resize.bind(this));
     this.element.observe("change", this.resize.bind(this));
@@ -8903,6 +9356,7 @@ Alice.Input = Class.create({
 
   resize: function() {
     (function() {
+      if (!this.window.active) return;
       var height = this.getContentHeight();
       if (height == 0) {
         this.element.setStyle({ height: null, top: 0 });
@@ -8979,7 +9433,7 @@ Alice.Keyboard = Class.create({
   },
 
   onCmdK: function() {
-    this.activeWindow.messages.update("");
+    this.activeWindow.messages.down("ul").update("");
     this.activeWindow.lastNick = "";
   },
 

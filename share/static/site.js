@@ -20,9 +20,10 @@ if (window == window.parent) {
   alice.options = options;
  
   document.observe("dom:loaded", function () {
-    $$('ul.messages li.avatar + li:not(.consecutive)').each(function (li) {
+    $$('ul.messages li.avatar:not(.consecutive) + li:not(.consecutive)').each(function (li) {
       li.previous().setStyle({minHeight:"42px"});
     });
+    alice.activeWindow().scrollToBottom();
     $$('#config_overlay option').each(function(opt){opt.selected = false});
     $('tab_overflow_overlay').observe("change", function (e) {
       var win = alice.getWindow($('tab_overflow_overlay').value);
@@ -35,6 +36,9 @@ if (window == window.parent) {
           break;
         case "Connections":
           alice.toggleConfig(e);
+          break;
+        case "Logout":
+          window.location = "/logout";
           break;
       }
       $$('#config_overlay option').each(function(opt){opt.selected = false});
@@ -61,14 +65,6 @@ if (window == window.parent) {
     window.onblur = function () {alice.isFocused = false};
  
     Alice.makeSortable();
-    
-    if (navigator.userAgent.match(/Chrome/)) {
-      $$('tr.input textarea').invoke('setStyle', {padding: '3px'});
-    }
-    if (Prototype.Browser.Gecko) {
-      alice.activeWindow().resizeMessagearea();
-      alice.activeWindow().scrollToBottom();
-    }
   });
 }
 

@@ -32,16 +32,11 @@ is $window->nick, "tester", "nick";
 is $window->topic->{string}, "no topic set", "default window topic";
 
 is_deeply $window->serialized, {
-  id => "win_7d25e1fdc28e1ce4918085e41e1280da",
+  id => "win_12a7a1b66e38e51b100fb7734ac19f38",
   session => "test",
   title => "#test-window",
   is_channel => 1,
   type => "channel",
 }, "serialize window";
-
-$window->add_message({}) for (0 .. 110);
-is scalar @{$window->msgbuffer}, $window->buffersize, "max message buffer size";
-$window->clear_buffer;
-is scalar @{$window->msgbuffer}, 0, "clear message buffer";
 
 done_testing();

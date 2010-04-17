@@ -7,17 +7,15 @@ use Twiggy::Server;
 use Plack::Request;
 use Plack::Builder;
 use Plack::Middleware::Static;
-use Plack::Middleware::Auth::Basic;
+use Plack::Session::Store::File;
 
 use App::Alice::Stream;
-use App::Alice::CommandDispatch;
+use App::Alice::Commands;
 
 use JSON;
 use Encode;
 use Any::Moose;
 use Try::Tiny;
-
-use feature 'switch';
 
 has 'app' => (
   is  => 'ro',
@@ -33,6 +31,29 @@ has 'config' => (
   isa => 'App::Alice::Config',
   lazy => 1,
   default => sub {shift->app->config},
+);
+
+has 'url_handlers' => (
+  is => 'ro',
+  isa => 'ArrayRef',
+  default => sub {
+    [
+      { re => qr{^/serverconfig/?$}, sub  => 'server_config' },
+      { re => qr{^/config/?$},       sub  => 'send_config' },
+      { re => qr{^/save/?$},         sub  => 'save_config' },
+      { re => qr{^/tabs/?$},         sub  => 'tab_order' },
+      { re => qr{^/view/?$},         sub  => 'send_index' },
+      { re => qr{^/stream/?$},       sub  => 'setup_stream' },
+      { re => qr{^/login/?$},        sub  => 'login' },
+      { re => qr{^/logout/?$},       sub  => 'logout' },
+      { re => qr{^/say/?$},          sub  => 'handle_message' },
+      { re => qr{^/get},             sub  => 'image_proxy' },
+      { re => qr{^/logs/?$},         sub  => 'send_logs' },
+      { re => qr{^/search/?$},       sub  => 'send_search' },
+      { re => qr{^/range/?$},        sub  => 'send_range' },
+      { re => qr{^/$},               sub  => 'send_index' },
+    ]
+  }
 );
 
 has 'streams' => (
@@ -54,10 +75,13 @@ sub BUILD {
   );
   $httpd->register_service(
     builder {
-      enable "Auth::Basic", authenticator => sub {$self->authenticate(@_)}
-        if $self->app->config->auth_enabled;
+      if ($self->app->auth_enabled) {
+        enable "Session",
+          store => Plack::Session::Store::File->new(dir => $self->config->path),
+          expires => "24h";
+      }
       enable "Static", path => qr{^/static/}, root => $self->config->assetdir;
-      sub {$self->dispatch(shift)} 
+      sub {$self->dispatch(shift)}
     }
   );
   $self->httpd($httpd);
@@ -67,21 +91,62 @@ sub BUILD {
 sub dispatch {
   my ($self, $env) = @_;
   my $req = Plack::Request->new($env);
-  given ($req->path_info) {
-    when ('/serverconfig') {return $self->server_config($req)}
-    when ('/config')       {return $self->send_config($req)}
-    when ('/save')         {return $self->save_config($req)}
-    when ('/tabs')         {return $self->tab_order($req)}
-    when ('/view')         {return $self->send_index($req)}
-    when ('/stream')       {return $self->setup_stream($req)}
-    when ('/say')          {return $self->handle_message($req)}
-    when (/^\/get/)        {return $self->image_proxy($req)}
-    when ('/logs')         {return $self->send_logs($req)}
-    when ('/search')       {return $self->send_search($req)}
-    when ('/range')        {return $self->send_range($req)}
-    when ('/')             {return $self->send_index($req)}
-    default                {return $self->not_found($req)}
+  if ($self->app->auth_enabled) {
+    unless ($req->path eq "/login" or $self->is_logged_in($req)) {
+      my $res = $req->new_response;
+      $res->redirect("/login");
+      return $res->finalize;
+    }
   }
+  for my $handler (@{$self->url_handlers}) {
+    my $re = $handler->{re};
+    if ($req->path_info =~ /$re/) {
+      my $sub = $handler->{sub};
+      if ($self->meta->find_method_by_name($sub)) {
+        return $self->$sub($req);
+      }
+    }
+  }
+  return $self->not_found($req);
+}
+
+sub is_logged_in {
+  my ($self, $req) = @_;
+  my $session = $req->env->{"psgix.session"};
+  return $session->{is_logged_in};
+}
+
+sub login {
+  my ($self, $req) = @_;
+  my $res = $req->new_response;
+  if (!$self->app->auth_enabled or $self->is_logged_in($req)) {
+    $res->redirect("/");
+    return $res->finalize;
+  }
+  elsif (my $user = $req->param("username")
+     and my $pass = $req->param("password")) {
+    if ($self->app->authenticate($user, $pass)) {
+      $req->env->{"psgix.session"}->{is_logged_in} = 1;
+      $res->redirect("/");
+      return $res->finalize;
+    }
+  }
+  $res->status(200);
+  $res->body($self->app->render("login"));
+  return $res->finalize;
+}
+
+sub logout {
+  my ($self, $req) = @_;
+  my $res = $req->new_response;
+  if (!$self->app->auth_enabled) {
+    $res->redirect("/");
+  } else {
+    $req->env->{"psgix.session"}{is_logged_in} = 0;
+    $req->env->{"psgix.session.options"}{expire} = 1;
+    $res->redirect("/login");
+  }
+  return $res->finalize;
 }
 
 sub ping {
@@ -137,40 +202,34 @@ sub broadcast {
   $self->purge_disconnects if $purge;
 };
 
-sub authenticate {
-  my ($self, $user, $pass) = @_;
-  return 1 unless ($self->app->config->auth_enabled);
-
-  if ($self->config->auth->{username} eq $user &&
-      $self->config->auth->{password} eq $pass) {
-    return 1;
-  }
-  return 0;
-}
-
 sub setup_stream {
   my ($self, $req) = @_;
   $self->app->log(info => "opening new stream");
-  my $msgid = $req->param('msgid') || 0;
+  my $min = $req->param('msgid') || 0;
   return sub {
     my $respond = shift;
-    $self->add_stream(
-      App::Alice::Stream->new(
-        queue      => [
-          ($msgid ? $self->app->buffered_messages($msgid) : ()),
-          map({$_->join_action} $self->app->windows),
-        ],
-        writer     => $respond,
-        start_time => $req->param('t'),
-      )
+    my $stream = App::Alice::Stream->new(
+      queue      => [ map({$_->join_action} $self->app->windows) ],
+      writer     => $respond,
+      start_time => $req->param('t'),
     );
+    $self->add_stream($stream);
+    $self->app->with_messages(sub {
+      return unless @_;
+      $stream->enqueue(
+        map  {$_->{buffered} = 1; $_}
+        grep {$_->{msgid} > $min}
+        @_
+      );
+      $stream->send;
+    });
   }
 }
 
 sub purge_disconnects {
   my ($self) = @_;
   $self->app->log(debug => "removing broken streams");
-  $self->streams([grep {!$_->disconnected} $self->streams]);
+  $self->streams([grep {!$_->closed} $self->streams]);
 }
 
 sub handle_message {
@@ -181,7 +240,7 @@ sub handle_message {
   my $window = $self->app->get_window($source);
   if ($window) {
     for (split /\n/, $msg) {
-      eval {$self->app->dispatch($_, $window) if length $_};
+      eval {$self->app->handle_command($_, $window) if length $_};
       if ($@) {$self->app->log(info => $@)}
     }
   }
@@ -197,18 +256,37 @@ sub send_index {
     my $writer = $respond->([200, ["Content-type" => "text/html; charset=utf-8"]]);
     $writer->write(encode_utf8 $self->app->render('index_head'));
     my @windows = $self->app->sorted_windows;
-    for (0 .. scalar @windows - 1) {
-      my @classes;
-      if (scalar @windows > 1 and $_ == 1) {
-        push @classes, "active";
-      } elsif (scalar @windows == 1 and $_ == 0) {
-        push @classes, "active";
-      }
-      $writer->write(encode_utf8 $self->app->render('window', $windows[$_], @classes));
+    if (@windows == 1) {
+      $windows[0]->{active} = 1;
+    } elsif (@windows > 1) {
+      $windows[1]->{active} = 1;
     }
-    $writer->write(encode_utf8 $self->app->render('index_footer'));
-    $writer->close;
+    $self->send_windows(@windows, $writer, sub {
+      $writer->write(encode_utf8 $self->app->render('index_footer'));
+      $writer->close;
+    });
   }
+}
+
+sub send_windows {
+  my $cb = pop;
+  my $writer = pop;
+  my ($self, @windows) = @_;
+  if (@windows) {
+    my $window = pop @windows;
+    $writer->write(encode_utf8 $self->app->render('window_head', $window));
+    delete $window->{active} if $window->{active};
+    $window->buffer->with_messages(sub {
+      my @messages = @_;
+      $writer->write(encode_utf8 $_->{html}) for @messages;
+    }, 0, sub {
+      $writer->write(encode_utf8 $self->app->render('window_footer', $window));
+      $self->send_windows(@windows, $writer, $cb);
+    });
+  }   
+  else {
+    $cb->(); 
+  }     
 }
 
 sub send_logs {
@@ -251,9 +329,7 @@ sub send_range {
 sub send_config {
   my ($self, $req) = @_;
   $self->app->log(info => "serving config");
-  
   my $output = $self->app->render('servers');
-  
   my $res = $req->new_response(200);
   $res->body($output);
   return $res->finalize;
@@ -279,7 +355,6 @@ sub save_config {
   $self->app->log(info => "saving config");
   
   my $new_config = {servers => {}};
-  
   for my $name (keys %{$req->parameters}) {
     next unless $req->parameters->{$name};
     if ($name =~ /^(.+?)_(.+)/) {
@@ -307,7 +382,6 @@ sub tab_order  {
   $self->app->log(debug => "updating tab order");
   
   $self->app->tab_order([grep {defined $_} $req->parameters->get_all('tabs')]);
-  
   my $res = $req->new_response(200);
   $res->body('ok');
   return $res->finalize;

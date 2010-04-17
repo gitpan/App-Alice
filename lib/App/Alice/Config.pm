@@ -113,17 +113,30 @@ has ignore => (
   default => sub {[]},
 );
 
-sub add_ignore {push @{shift->ignore}, @_}
+has message_store => (
+  is      => 'rw',
+  isa     => 'Str',
+  default => 'Memory'
+);
+
+has static_prefix => (
+  is      => 'rw',
+  isa     => 'Str',
+  default => '/static/',
+);
+
 sub ignores {@{$_[0]->ignore}}
+sub add_ignore {push @{shift->ignore}, @_}
 
 sub BUILD {
   my $self = shift;
   $self->load;
+  mkdir $self->path unless -d $self->path;
+  mkdir $self->path."/sessions" unless -d $self->path."/sessions";
 }
 
 sub load {
   my $self = shift;
-  mkdir $self->path if !-d $self->path;
   my $config = {};
   if (-e $self->fullpath) {
     $config = require $self->fullpath;
@@ -188,7 +201,7 @@ sub write {
     local $Data::Dumper::Terse = 1;
     local $Data::Dumper::Indent = 1;
     print $fh Dumper($config)
-      or die "Can not write config file: $!\n";
+      or warn "Can not write config file: $!\n";
   }
 }
 
@@ -201,14 +214,6 @@ sub serialized {
     } grep {$_->has_write_method}
     $self->meta->get_all_attributes
   };
-}
-
-sub auth_enabled {
-  my $self = shift;
-  $self->auth
-      and ref $self->auth eq 'HASH'
-      and $self->auth->{username}
-      and $self->auth->{password};
 }
 
 __PACKAGE__->meta->make_immutable;

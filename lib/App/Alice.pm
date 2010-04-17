@@ -14,7 +14,7 @@ use File::Copy;
 use Digest::MD5 qw/md5_hex/;
 use Encode;
 
-our $VERSION = '0.12';
+our $VERSION = '0.13';
 
 has condvar => (
   is       => 'rw',
@@ -63,11 +63,11 @@ has httpd => (
   },
 );
 
-has dispatcher => (
+has commands => (
   is      => 'ro',
-  isa     => 'App::Alice::CommandDispatch',
+  isa     => 'App::Alice::Commands',
   default => sub {
-    App::Alice::CommandDispatch->new(app => shift);
+    App::Alice::Commands->new(app => shift);
   }
 );
 
@@ -172,16 +172,24 @@ has 'shutting_down' => (
   isa => 'Bool',
 );
 
+has 'user' => (
+  is => 'ro',
+  default => $ENV{USER}
+);
+
 sub BUILDARGS {
   my ($class, %options) = @_;
   my $self = {standalone => 1};
-  for (qw/standalone history notifier/) {
+  for (qw/standalone history notifier template/) {
     if (exists $options{$_}) {
       $self->{$_} = $options{$_};
       delete $options{$_};
     }
   }
   $self->{config} = App::Alice::Config->new(%options);
+  # some options get overwritten by the config
+  # so merge options again
+  $self->{config}->merge(\%options);
   return $self;
 }
 
@@ -217,15 +225,15 @@ sub init_shutdown {
   my ($self, $cb, $msg) = @_;
   $self->{on_shutdown} = $cb;
   $self->shutting_down(1);
-  $self->httpd->shutdown;
-  $self->history(undef);
-  if (!$self->ircs) {
+  $self->alert("Alice server is shutting down");
+  if ($self->ircs) {
+    print STDERR "\nDisconnecting, please wait\n" if $self->standalone;
+    $_->init_shutdown($msg) for $self->ircs;
+  }
+  else {
     $self->shutdown;
     return;
   }
-  print STDERR "\nDisconnecting, please wait\n"
-    if $self->standalone;
-  $_->init_shutdown($msg) for $self->ircs;
   $self->{shutdown_timer} = AnyEvent->timer(
     after => 3,
     cb    => sub{$self->shutdown}
@@ -235,14 +243,17 @@ sub init_shutdown {
 sub shutdown {
   my $self = shift;
   $self->irc_map({});
+  $self->httpd->shutdown;
+  $_->buffer->clear for $self->windows;
+  $self->history(undef);
   delete $self->{shutdown_timer} if $self->{shutdown_timer};
   $self->{on_shutdown}->() if $self->{on_shutdown};
   $self->condvar->send if $self->condvar;
 }
 
-sub dispatch {
+sub handle_command {
   my ($self, $command, $window) = @_;
-  $self->dispatcher->handle($command, $window);
+  $self->commands->handle($command, $window);
 }
 
 sub merge_config {
@@ -271,25 +282,33 @@ sub tab_order {
   $self->config->write;
 }
 
-sub buffered_messages {
-  my ($self, $min) = @_;
-  return map {$_->{buffered} = 1; $_;}
-         grep {$_->{msgid} > $min or $min > $self->msgid}
-         map {@{$_->msgbuffer}} $self->windows;
+sub with_messages {
+  my ($self, $cb) = @_;
+  $_->buffer->with_messages($cb) for $self->windows;
 }
 
 sub find_window {
   my ($self, $title, $connection) = @_;
   return $self->info_window if $title eq "info";
-  my $id = _build_window_id($title, $connection->alias);
+  my $id = $self->_build_window_id($title, $connection->alias);
   if (my $window = $self->get_window($id)) {
     return $window;
   }
 }
 
+sub alert {
+  my ($self, $message) = @_;
+  return unless $message;
+  $self->broadcast({
+    type => "action",
+    event => "alert",
+    body => $message,
+  });
+}
+
 sub create_window {
   my ($self, $title, $connection) = @_;
-  my $id = _build_window_id($title, $connection->alias);
+  my $id = $self->_build_window_id($title, $connection->alias);
   my $window = App::Alice::Window->new(
     title    => $title,
     irc      => $connection,
@@ -301,8 +320,8 @@ sub create_window {
 }
 
 sub _build_window_id {
-  my ($title, $connection_alias) = @_;
-  return "win_" . md5_hex(encode_utf8(lc "$title-$connection_alias"));
+  my ($self, $title, $connection_alias) = @_;
+  return "win_" . md5_hex(encode_utf8(lc $self->user."-$title-$connection_alias"));
 }
 
 sub find_or_create_window {
@@ -344,10 +363,10 @@ sub close_window {
 
 sub add_irc_server {
   my ($self, $name, $config) = @_;
+  $self->config->servers->{$name} = $config;
   my $irc = App::Alice::IRC->new(
     app    => $self,
-    alias  => $name,
-    config => $config
+    alias  => $name
   );
   $self->add_irc($name, $irc);
 }
@@ -373,13 +392,13 @@ sub reload_config {
 }
 
 sub format_info {
-  my ($self, $session, $body, $highlight, $monospaced) = @_;
-  $highlight = 0 unless $highlight;
-  $self->info_window->format_message($session, $body, $highlight, $monospaced);
+  my ($self, $session, $body, %options) = @_;
+  $self->info_window->format_message($session, $body, %options);
 }
 
 sub broadcast {
   my ($self, @messages) = @_;
+  
   # add any highlighted messages to the log window
   push @messages, map {$self->info_window->copy_message($_)}
                   grep {$_->{highlight}} @messages;
@@ -388,22 +407,9 @@ sub broadcast {
   
   return unless $self->notifier and ! $self->httpd->stream_count;
   for my $message (@messages) {
+    next if !$message->{window} or $message->{window}{type} eq "info";
     $self->notifier->display($message) if $message->{highlight};
   }
-}
-
-sub format_notice {
-  my ($self, $event, $nick, $body) = @_;
-  my $message = {
-    type      => "action",
-    event     => $event,
-    nick      => $nick,
-    body      => $body,
-    msgid     => $self->next_msgid,
-  };
-  $message->{full_html} = $self->render('event',$message);
-  $message->{event} = "notice";
-  return $message;
 }
 
 sub render {
@@ -442,6 +448,30 @@ sub remove_ignore {
 sub ignores {
   my $self = shift;
   return $self->config->ignores;
+}
+
+sub auth_enabled {
+  my $self = shift;
+  return ($self->config->auth
+      and ref $self->config->auth eq 'HASH'
+      and $self->config->auth->{user}
+      and $self->config->auth->{pass});
+}
+
+sub authenticate {
+  my ($self, $user, $pass) = @_;
+  $user ||= "";
+  $pass ||= "";
+  if ($self->auth_enabled) {
+    return ($self->config->auth->{user} eq $user
+       and $self->config->auth->{pass} eq $pass);
+  }
+  return 1;
+}
+
+sub static_url {
+  my ($self, $file) = @_;
+  return $self->config->static_prefix . $file;
 }
 
 __PACKAGE__->meta->make_immutable;
