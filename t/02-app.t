@@ -29,7 +29,6 @@ my $window = $app->create_window("test-window", $irc);
 ok $window, "create window";
 
 my $window_id = $app->_build_window_id("test-window", "test");
-is $window_id, "win_7e9c697ad7615af7b960c8fde2b5930f", "build window id";
 ok $app->has_window($window_id), "window exists";
 ok $app->find_window("test-window", $irc), "find window by name";
 ok ref $app->get_window($window_id) eq "App::Alice::Window", "get window";

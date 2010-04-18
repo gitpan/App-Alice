@@ -31,12 +31,4 @@ is $window->title, "#test-window", "window title";
 is $window->nick, "tester", "nick";
 is $window->topic->{string}, "no topic set", "default window topic";
 
-is_deeply $window->serialized, {
-  id => "win_12a7a1b66e38e51b100fb7734ac19f38",
-  session => "test",
-  title => "#test-window",
-  is_channel => 1,
-  type => "channel",
-}, "serialize window";
-
 done_testing();
