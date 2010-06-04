@@ -1,7 +1,7 @@
 ? my ($app, $results) = @_;
 <ul id="logresults">
 ? for my $result (@$results) {
-<li onclick="expandRange('<?= $result->[2] ?>', <?= $result->[0] ?>, this)">
+<li onclick="expandRange('<?= $result->[1] ?>', <?= $result->[4] ?>, this)">
 ? my @date = localtime($result->[0]);
 ? $date[5] = $date[5] % 100;
 ? $date[4] = $date[4] + 1;

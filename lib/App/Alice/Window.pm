@@ -46,6 +46,16 @@ has title => (
   required => 1,
 );
 
+has sort_name => (
+  is       => 'ro',
+  lazy     => 1,
+  default  => sub {
+    my $name = $_[0]->title;
+    $name =~ s/^#//;
+    $name;
+  }
+);
+
 has topic => (
   is      => 'rw',
   isa     => 'HashRef[Str|Undef]',
@@ -82,6 +92,7 @@ has _irc => (
 has app => (
   is      => 'ro',
   isa     => 'App::Alice',
+  weak_ref => 1,
   required => 1,
 );
 
@@ -118,16 +129,6 @@ sub all_nicks {
   my ($self) = @_;
   return unless $self->is_channel;
   return $self->irc->channel_nicks($self->title);
-}
-
-sub disconnect_action {
-  my $self = shift;
-  return {
-    type   => "action",
-    event  => "disconnect",
-    nicks  => [],
-    window => $self->serialized,
-  }
 }
 
 sub join_action {
@@ -204,7 +205,6 @@ sub format_message {
     nick      => $nick,
     avatar    => $self->irc->nick_avatar($nick),
     window    => $self->serialized,
-    highlight => ($own_nick ne $nick and $body) =~ /\b$own_nick\b/i ? 1 : 0,
     html      => encoded_string($html),
     self      => $own_nick eq $nick,
     msgid     => $self->app->next_msgid,
@@ -212,6 +212,9 @@ sub format_message {
     monospaced => $self->app->is_monospace_nick($nick),
     consecutive => $nick eq $self->buffer->previous_nick ? 1 : 0,
   };
+  unless ($message->{self}) {
+    $message->{highlight} = $self->app->is_highlight($own_nick, $body);
+  }
   $message->{html} = $self->app->render("message", $message);
   $self->buffer->add($message);
   return $message;

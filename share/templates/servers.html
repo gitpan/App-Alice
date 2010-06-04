@@ -6,7 +6,6 @@
     <title>Connections</title>
     <script type="text/javascript" src="/static/alice.js"></script>
     <link type="text/css" rel="stylesheet" href="/static/site.css" />
-    <link type="text/css" rel="stylesheet" href="/static/config.css" />
     <!--[if !IE]>--> 
     <link rel="stylesheet" href="/static/styles/iphone.css" type="text/css" 
           media="only screen and (max-device-width: 480px)" /> 
@@ -16,6 +15,24 @@
 	<body class="config">
 		<div id="config">
 		  <script type="text/javascript">
+		      disconnectServer = function (alias) {
+		        $(alias + "_status").className = "disconnected";
+		        $(alias + "_status").innerHTML = "disconnected";
+		        $(alias + "_connection").innerHTML = "connect";
+		        $(alias + "_connection").onclick = function (e) {
+		          e.stop();
+		          serverConnection(alias, "connect");
+		        };
+		      };
+		      connectServer = function (alias) {
+		        $(alias + "_status").className = "connected";
+		        $(alias + "_status").innerHTML = "connected";
+		        $(alias + "_connection").innerHTML = "disconnect";
+		        $(alias + "_connection").onclick = function (e) {
+		          e.stop();
+		          serverConnection(alias, "disconnect");
+		        };
+		      };
 			    showConnection = function (alias) {
 			      $$("div#config .active").invoke("removeClassName","active");
 			      $("setting_" + alias).addClassName("active");
@@ -86,7 +103,7 @@
               method: 'get',
               parameters: {
                 msg: '/' + action + ' ' + alias,
-                source: 'info'
+                source: window.opener.alice.activeWindow().id
               }
             });
             return false;
@@ -110,6 +127,7 @@
 		  </div>
   
 		  <form id="config_data" onsubmit="return submitConfig(this)">
+		    <input type="hidden" name="has_servers" value="1" />
 		  <? for my $index (0 .. @connections - 1) { ?>
 		    <? my $connection = $connections[$index]; ?>
 		    <? my $alias = $connection->alias; ?>
@@ -122,7 +140,7 @@
 		    <div class="field" style="width:150px;margin-right:0">
 		      <label>Status</label>
 		      <? my $status = $connection->is_connected ? "connected" : "disconnected" ?>
-		      <span class="<?= $status ?>"><?= $status ?></span>
+		      <span class="<?= $status ?>" id="<?= $alias ?>_status"><?= $status ?></span>
 		    </div>
 		    <div class="field clear" style="width:138px">
 		      <label>Auto-connect?</label>
@@ -130,19 +148,19 @@
         </div>
 		    <div class="field">
 		      <? my $action = $connection->is_connected ? "disconnect" : "connect" ?>
-		      <button onclick="return serverConnection('<?= $connection->alias ?>', '<?= $action ?>')">
+		      <button id="<?= $alias ?>_connection" onclick="return serverConnection('<?= $connection->alias ?>', '<?= $action ?>')">
 		        <?= $action ?>
 		      </button>
 		    </div>
 		    <div class="field clear">
 		      <label>Server address</label>
-		      <input type="text" name="<?= $alias ?>_host" value="<?= $connection->config->{host} ?>" size="15"/>
+		      <input type="text" name="<?= $alias ?>_host" value="<?= $connection->config->{host} || "" ?>" size="15"/>
 		    </div>
 		    <div class="field">
 		      <label>Port</label>
-		      <input type="text" name="<?= $alias ?>_port" value="<?= $connection->config->{port} ?>" size="6" style="float:left"/>
+		      <input type="text" name="<?= $alias ?>_port" value="<?= $connection->config->{port} || "" ?>" size="6" style="float:left"/>
 		      <div style="float:left">
-		      <input type="checkbox" name="<?= $alias ?>_ssl"<? if ($connection->config->{ssl}) { ?> checked="checked"<? } ?> style="display:inline;margin-right:0px"/>
+		      <input type="checkbox" name="<?= $alias ?>_ssl"<? if ($connection->config->{ssl}) { ?> checked="checked"<? } ?> />
 		      <span style="font-size:0.7em">SSL</span>
 		      </div>
 		    </div>

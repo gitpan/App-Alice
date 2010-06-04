@@ -22,8 +22,8 @@ has 'handlers' => (
       },
       {
         sub => 'nick',
-        re => qr{^/nick\s+(\S+)},
-        eg => "/NICK <new nick>",
+        re => qr{^/nick\s+$SRVOPT(\S+)},
+        eg => "/NICK [-<server name>] <new nick>",
         desc => "Changes your nick.",
       },
       {
@@ -58,7 +58,7 @@ has 'handlers' => (
       },
       {
         sub => 'topic',
-        re => qr{^/topic(?:\s+(.+))?},
+        re => qr{^/t(?:opic)?(?:\s+(.+))?},
         in_channel => 1,
         eg => "/TOPIC [<topic>]",
         desc => "Shows and/or changes the topic of the current channel.",
@@ -112,6 +112,12 @@ has 'handlers' => (
         desc => "Lists ignored nicks.",
       },
       {
+        sub => 'window',
+        re => qr{^/w(?:indow)?\s+(\d+|next|prev(?:ious)?)},
+        eg => "/WINDOW <window number>",
+        desc => "Focuses the provided window number",
+      },
+      {
         sub => 'help',
         re => qr{^/help(?:\s+(\S+))?},
       },
@@ -126,6 +132,7 @@ has 'handlers' => (
 has 'app' => (
   is       => 'ro',
   isa      => 'App::Alice',
+  weak_ref => 1,
   required => 1,
 );
 
@@ -155,7 +162,8 @@ sub handle {
 sub help {
   my ($self, $window, $command) = @_;
   if (!$command) {
-    $self->reply($window, "Available commands\n" . join " ", map {
+    $self->reply($window, '/HELP <command> for help with a specific command');
+    $self->reply($window, "Available commands: " . join " ", map {
       my $name = $_->{sub};
       $name =~ s/^_//;
       uc $name;
@@ -237,8 +245,15 @@ sub part {
 }
 
 sub nick {
-  my ($self, $window, $nick) = @_;
-  $window->irc->send_srv(NICK => $nick);
+  my ($self, $window, $nick, $network) = @_;
+  my $irc;
+  if ($network and $self->app->has_irc($network)) {
+    $irc = $self->app->get_irc($network);
+  } else {
+    $irc = $window->irc;
+  }
+  $irc->log(info => "now known as $nick");
+  $irc->send_srv(NICK => $nick);
 }
 
 sub create {
@@ -318,6 +333,15 @@ sub unignore {
   $self->reply($window, "No longer ignoring $nick");
 }
 
+sub window {
+  my ($self, $window, $window_number) = @_;
+  $self->broadcast({
+    type => "action",
+    event => "focus",
+    window_number => $window_number,
+  });
+}
+
 sub notfound {
   my ($self, $window, $command) = @_;
   $self->reply($window, "Invalid command $command");
@@ -333,7 +357,7 @@ sub _say {
     $self->reply($window, "You are not connected to ".$window->irc->alias.".");
     return;
   }
-  $self->app->store($window->nick, $window->title, $msg);
+  $self->app->store(nick => $window->nick, channel => $window->title, body => $msg);
   $self->show($window, $msg);
   $window->irc->send_srv(PRIVMSG => $window->title, $msg);
 }

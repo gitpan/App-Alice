@@ -38,20 +38,21 @@ has 'url_handlers' => (
   isa => 'ArrayRef',
   default => sub {
     [
-      { re => qr{^/serverconfig/?$}, sub  => 'server_config' },
+      { re => qr{^/$},               sub  => 'send_index' },
+      { re => qr{^/say/?$},          sub  => 'handle_message' },
+      { re => qr{^/stream/?$},       sub  => 'setup_stream' },
       { re => qr{^/config/?$},       sub  => 'send_config' },
+      { re => qr{^/prefs/?$},        sub  => 'send_prefs' },
+      { re => qr{^/serverconfig/?$}, sub  => 'server_config' },
       { re => qr{^/save/?$},         sub  => 'save_config' },
       { re => qr{^/tabs/?$},         sub  => 'tab_order' },
-      { re => qr{^/view/?$},         sub  => 'send_index' },
-      { re => qr{^/stream/?$},       sub  => 'setup_stream' },
       { re => qr{^/login/?$},        sub  => 'login' },
       { re => qr{^/logout/?$},       sub  => 'logout' },
-      { re => qr{^/say/?$},          sub  => 'handle_message' },
-      { re => qr{^/get},             sub  => 'image_proxy' },
       { re => qr{^/logs/?$},         sub  => 'send_logs' },
       { re => qr{^/search/?$},       sub  => 'send_search' },
       { re => qr{^/range/?$},        sub  => 'send_range' },
-      { re => qr{^/$},               sub  => 'send_index' },
+      { re => qr{^/view/?$},         sub  => 'send_index' },
+      { re => qr{^/get},             sub  => 'image_proxy' },
     ]
   }
 );
@@ -102,9 +103,7 @@ sub dispatch {
     my $re = $handler->{re};
     if ($req->path_info =~ /$re/) {
       my $sub = $handler->{sub};
-      if ($self->meta->find_method_by_name($sub)) {
-        return $self->$sub($req);
-      }
+      return $self->$sub($req);
     }
   }
   return $self->not_found($req);
@@ -254,39 +253,33 @@ sub send_index {
   return sub {
     my $respond = shift;
     my $writer = $respond->([200, ["Content-type" => "text/html; charset=utf-8"]]);
-    $writer->write(encode_utf8 $self->app->render('index_head'));
     my @windows = $self->app->sorted_windows;
-    if (@windows == 1) {
-      $windows[0]->{active} = 1;
-    } elsif (@windows > 1) {
-      $windows[1]->{active} = 1;
-    }
-    $self->send_windows(@windows, $writer, sub {
-      $writer->write(encode_utf8 $self->app->render('index_footer'));
+    @windows > 1 ? $windows[1]->{active} = 1 : $windows[0]->{active} = 1;
+    $writer->write(encode_utf8 $self->app->render('index_head', @windows));
+    $self->send_windows($writer, sub {
+      $writer->write(encode_utf8 $self->app->render('index_footer', @windows));
       $writer->close;
-    });
+      delete $_->{active} for @windows;
+    }, @windows);
   }
 }
 
 sub send_windows {
-  my $cb = pop;
-  my $writer = pop;
-  my ($self, @windows) = @_;
-  if (@windows) {
+  my ($self, $writer, $cb, @windows) = @_;
+  if (!@windows) {
+    $cb->();
+  }
+  else {
     my $window = pop @windows;
     $writer->write(encode_utf8 $self->app->render('window_head', $window));
-    delete $window->{active} if $window->{active};
     $window->buffer->with_messages(sub {
       my @messages = @_;
       $writer->write(encode_utf8 $_->{html}) for @messages;
     }, 0, sub {
       $writer->write(encode_utf8 $self->app->render('window_footer', $window));
-      $self->send_windows(@windows, $writer, $cb);
+      $self->send_windows($writer, $cb, @windows);
     });
-  }   
-  else {
-    $cb->(); 
-  }     
+  }    
 }
 
 sub send_logs {
@@ -301,7 +294,8 @@ sub send_search {
   my ($self, $req) = @_;
   return sub {
     my $respond = shift;
-    $self->app->history->search(%{$req->parameters}, sub {
+    $self->app->history->search(
+      user => $self->app->user, %{$req->parameters}, sub {
       my $rows = shift;
       my $content = $self->app->render('results', $rows);
       my $res = $req->new_response(200);
@@ -315,14 +309,16 @@ sub send_range {
   my ($self, $req) = @_;
   return sub {
     my $respond = shift;
-    $self->app->history->range($req->param('channel'), $req->param('time'), sub {
-      my ($before, $after) = @_;
-      $before = $self->app->render('range', $before, 'before');
-      $after = $self->app->render('range', $after, 'after');
-      my $res = $req->new_response(200);
-      $res->body(to_json [$before, $after]);
-      $respond->($res->finalize);
-    }); 
+    $self->app->history->range(
+      $self->app->user, $req->param('channel'), $req->param('id'), sub {
+        my ($before, $after) = @_;
+        $before = $self->app->render('range', $before, 'before');
+        $after = $self->app->render('range', $after, 'after');
+        my $res = $req->new_response(200);
+        $res->body(to_json [$before, $after]);
+        $respond->($res->finalize);
+      }
+    ); 
   }
 }
 
@@ -330,6 +326,15 @@ sub send_config {
   my ($self, $req) = @_;
   $self->app->log(info => "serving config");
   my $output = $self->app->render('servers');
+  my $res = $req->new_response(200);
+  $res->body($output);
+  return $res->finalize;
+}
+
+sub send_prefs {
+  my ($self, $req) = @_;
+  $self->app->log(info => "serving prefs");
+  my $output = $self->app->render('prefs');
   my $res = $req->new_response(200);
   $res->body($output);
   return $res->finalize;
@@ -354,24 +359,35 @@ sub save_config {
   my ($self, $req) = @_;
   $self->app->log(info => "saving config");
   
-  my $new_config = {servers => {}};
+  my $new_config = {};
+  if ($req->parameters->{has_servers}) {
+    $new_config->{servers} = {};
+  }
   for my $name (keys %{$req->parameters}) {
     next unless $req->parameters->{$name};
-    if ($name =~ /^(.+?)_(.+)/) {
+    next if $name eq "has_servers";
+    if ($name =~ /^(.+?)_(.+)/ and exists $new_config->{servers}) {
       if ($2 eq "channels" or $2 eq "on_connect") {
         $new_config->{servers}{$1}{$2} = [$req->parameters->get_all($name)];
       } else {
         $new_config->{servers}{$1}{$2} = $req->param($name);
       }
-    } else {
+    }
+    elsif ($name eq "highlights") {
+      $new_config->{$name} = [$req->parameters->get_all($name)];
+    }
+    else {
       $new_config->{$name} = $req->param($name);
     }
   }
-  
   $self->config->merge($new_config);
   $self->app->reload_config();
   $self->config->write;
-  
+
+  $self->app->broadcast(
+    $self->app->format_info("config", "saved")
+  );
+
   my $res = $req->new_response(200);
   $res->body('ok');
   return $res->finalize;

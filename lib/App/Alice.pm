@@ -14,7 +14,7 @@ use File::Copy;
 use Digest::MD5 qw/md5_hex/;
 use Encode;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 has condvar => (
   is       => 'rw',
@@ -103,9 +103,16 @@ has history => (
   lazy    => 1,
   default => sub {
     my $self = shift;
-    if (! -e $self->config->path ."/log.db") {
-      copy($self->config->assetdir."/log.db",
-           $self->config->path."/log.db");
+    my $config = $self->config->path."/log.db";
+    if (-e $config) {
+      my $mtime = (stat($config))[9];
+      if ($mtime < 1272757679) {
+        print STDERR "Log schema is out of date, updating\n";
+        copy($self->config->assetdir."/log.db", $config);
+      }
+    }
+    else {
+      copy($self->config->assetdir."/log.db", $config);
     }
     App::Alice::History->new(
       dbfile => $self->config->path ."/log.db"
@@ -115,7 +122,10 @@ has history => (
 
 sub store {
   my $self = shift;
-  $self->history->store(@_);
+  my %fields = @_;
+  $fields{user} = $self->user;
+  $fields{time} = time;
+  $self->history->store(%fields);
 }
 
 has logger => (
@@ -161,7 +171,7 @@ has 'info_window' => (
       assetdir => $self->config->assetdir,
       app      => $self,
     );
-    $self->add_window($info->title, $info);
+    $self->add_window($info->id, $info);
     return $info;
   }
 );
@@ -180,7 +190,7 @@ has 'user' => (
 sub BUILDARGS {
   my ($class, %options) = @_;
   my $self = {standalone => 1};
-  for (qw/standalone history notifier template/) {
+  for (qw/standalone history notifier template user/) {
     if (exists $options{$_}) {
       $self->{$_} = $options{$_};
       delete $options{$_};
@@ -196,12 +206,14 @@ sub BUILDARGS {
 sub run {
   my $self = shift;
   # initialize template and httpd because they are lazy
+  $self->history;
   $self->info_window;
   $self->template;
   $self->httpd;
   $self->notifier;
 
-  print STDERR "Location: http://".$self->config->http_address.":".$self->config->http_port."/\n";
+  print STDERR "Location: http://".$self->config->http_address.":".$self->config->http_port."/\n"
+    if $self->standalone;
 
   $self->add_irc_server($_, $self->config->servers->{$_})
     for keys %{$self->config->servers};
@@ -225,6 +237,7 @@ sub init_shutdown {
   my ($self, $cb, $msg) = @_;
   $self->{on_shutdown} = $cb;
   $self->shutting_down(1);
+  $self->history(undef);
   $self->alert("Alice server is shutting down");
   if ($self->ircs) {
     print STDERR "\nDisconnecting, please wait\n" if $self->standalone;
@@ -245,7 +258,6 @@ sub shutdown {
   $self->irc_map({});
   $self->httpd->shutdown;
   $_->buffer->clear for $self->windows;
-  $self->history(undef);
   delete $self->{shutdown_timer} if $self->{shutdown_timer};
   $self->{on_shutdown}->() if $self->{on_shutdown};
   $self->condvar->send if $self->condvar;
@@ -320,8 +332,8 @@ sub create_window {
 }
 
 sub _build_window_id {
-  my ($self, $title, $connection_alias) = @_;
-  return "win_" . md5_hex(encode_utf8(lc $self->user."-$title-$connection_alias"));
+  my ($self, $title, $session) = @_;
+  "w" . md5_hex(encode_utf8(lc $self->user."-$title-$session"));
 }
 
 sub find_or_create_window {
@@ -337,20 +349,14 @@ sub find_or_create_window {
 
 sub sorted_windows {
   my $self = shift;
-  my %order;
+  my %o;
   if ($self->config->order) {
-    %order = map {$self->config->order->[$_] => $_}
+    %o = map {$self->config->order->[$_] => $_ + 2}
              0 .. @{$self->config->order} - 1;
   }
-  $order{info} = "##";
-  sort {
-    my ($c, $d) = ($a->title, $b->title);
-    $c =~ s/^#//;
-    $d =~ s/^#//;
-    $c = $order{$a->title} . $c if exists $order{$a->title};
-    $d = $order{$b->title} . $d if exists $order{$b->title};
-    $c cmp $d;
-  } $self->windows
+  $o{info} = 1;
+  sort { ($o{$a->title} || $a->sort_name) cmp ($o{$b->title} || $b->sort_name) }
+       $self->windows;
 }
 
 sub close_window {
@@ -405,16 +411,26 @@ sub broadcast {
   
   $self->httpd->broadcast(@messages);
   
-  return unless $self->notifier and ! $self->httpd->stream_count;
-  for my $message (@messages) {
-    next if !$message->{window} or $message->{window}{type} eq "info";
-    $self->notifier->display($message) if $message->{highlight};
+  if ($self->config->alerts and $self->notifier and ! $self->httpd->stream_count) {
+    for my $message (@messages) {
+      next if !$message->{window} or $message->{window}{type} eq "info";
+      $self->notifier->display($message) if $message->{highlight};
+    }
   }
 }
 
 sub render {
   my ($self, $template, @data) = @_;
   return $self->template->render_file("$template.html", $self, @data)->as_string;
+}
+
+sub is_highlight {
+  my ($self, $own_nick, $body) = @_;
+  for ((@{$self->config->highlights}, $own_nick)) {
+    my $highlight = quotemeta($_);
+    return 1 if $body =~ /\b$highlight\b/i;
+  }
+  return 0;
 }
 
 sub is_monospace_nick {

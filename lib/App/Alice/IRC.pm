@@ -35,6 +35,7 @@ sub config {
 has 'app' => (
   isa      => 'App::Alice',
   is       => 'ro',
+  weak_ref => 1,
   required => 1,
 );
 
@@ -69,6 +70,7 @@ sub get_nick_info {$_[0]->nicks->{$_[1]}}
 sub all_nicks {keys %{$_[0]->nicks}}
 sub all_nick_info {values %{$_[0]->nicks}}
 sub set_nick_info {$_[0]->nicks->{$_[1]} = $_[2]}
+sub clear_nicks {$_[0]->nicks({})}
 
 has whois_cbs => (
   is        => 'rw',
@@ -106,8 +108,8 @@ sub BUILD {
     irc_377        => sub{$self->mlog(debug => $_[1]->{params}[-1])}, # MOTD info
     irc_378        => sub{$self->mlog(debug => $_[1]->{params}[-1])}, # MOTD info
     irc_401        => sub{$self->irc_401(@_)},
-    irc_432        => sub{$self->log(debug => $_[1]->{params}[-1])}, # Bad nick
-    irc_433        => sub{$self->log(debug => $_[1]->{params}[-1])}, # Bad nick
+    irc_432        => sub{$self->nick; $self->log(debug => $_[1]->{params}[-1])}, # Bad nick
+    irc_433        => sub{$self->nick; $self->log(debug => $_[1]->{params}[-1])}, # Bad nick
     irc_464        => sub{$self->disconnect("bad USER/PASS")},
   );
   $self->cl->ctcp_auto_reply ('VERSION', ['VERSION', "alice $App::Alice::VERSION"]);
@@ -180,7 +182,7 @@ sub nick {
     $self->nick_cached($nick);
     return $nick;
   }
-  return $self->nick_cached;
+  return $self->nick_cached || "Failure";
 }
 
 sub windows {
@@ -230,6 +232,12 @@ sub connected {
       $self->nick, $self->config->{username},
       $self->config->{ircname}, $self->config->{password}
     );
+    $self->broadcast({
+      type => "action",
+      event => "connect",
+      session => $self->alias,
+      windows => [map {$_->serialized} $self->windows],
+    });
   }
 }
 
@@ -297,10 +305,17 @@ sub disconnected {
   
   $self->broadcast(map {
     $_->format_event("disconnect", $self->nick, $reason),
-    $_->disconnect_action
   } $self->windows);
   
+  $self->broadcast({
+    type => "action",
+    event => "disconnect",
+    session => $self->alias,
+    windows => [map {$_->serialized} $self->windows],
+  });
+  
   $self->is_connected(0);
+  $self->clear_nicks;
   
   if ($self->app->shutting_down and !$self->app->connected_ircs) {
     $self->shutdown;
@@ -349,7 +364,7 @@ sub publicmsg {
     return if $self->app->is_ignore($nick);
     my $text = $msg->{params}[1];
     utf8::decode($_) for ($text, $nick);
-    $self->app->store($nick, $channel, $text);
+    $self->app->store(nick => $nick, channel => $channel, body => $text);
     $self->broadcast($window->format_message($nick, $text)); 
   }
 }
@@ -363,7 +378,7 @@ sub privatemsg {
     utf8::decode($from);
     return if $self->app->is_ignore($from);
     my $window = $self->window($from);
-    $self->app->store($from, $from, $text);
+    $self->app->store(nick => $from, channel => $from, body => $text);
     $self->broadcast($window->format_message($from, $text)); 
     $self->send_srv(WHO => $from) unless $self->includes_nick($from);
   }
@@ -378,7 +393,7 @@ sub ctcp_action {
   return if $self->app->is_ignore($nick);
   if (my $window = $self->find_window($channel)) {
     my $text = "• $msg";
-    $self->app->store($nick, $channel, $text);
+    $self->app->store(nick => $nick, channel => $channel, body => $text);
     $self->broadcast($window->format_message($nick, $text));
   }
 }
@@ -386,6 +401,7 @@ sub ctcp_action {
 sub nick_change {
   my ($self, $cl, $old_nick, $new_nick, $is_self) = @_;
   utf8::decode($_) for ($old_nick, $new_nick);
+  $self->nick_cached($new_nick) if $is_self;
   $self->rename_nick($old_nick, $new_nick);
   $self->broadcast(
     map  {$_->format_event("nick", $old_nick, $new_nick)}
@@ -436,6 +452,9 @@ sub part {
   if ($is_self and my $window = $self->find_window($channel)) {
     $self->log(debug => "leaving $channel");
     $self->app->close_window($window);
+    for ($self->all_nick_info) {
+      delete $_->{channels}{$channel} if exists $_->{channels}{$channel};
+    }
   }
 }
 
@@ -569,10 +588,10 @@ sub nick_avatar {
   if ($info and $info->{real}) {
     if ($info->{real} =~ /([^<\s]+@[^\s>]+\.[^\s>]+)/) {
       my $email = $1;
-      return "//www.gravatar.com/avatar/"
+      return "http://www.gravatar.com/avatar/"
            . md5_hex($email) . "?s=32&amp;r=x";
     }
-    elsif ($info->{real} =~ /^https?:(\/\/\S+(?:jpe?g|png|gif))/) {
+    elsif ($info->{real} =~ /(https?:\/\/\S+(?:jpe?g|png|gif))/) {
       return $1;
     }
     else {

@@ -34,6 +34,12 @@ has avatars => (
   default => "show",
 );
 
+has alerts => (
+  is      => 'rw',
+  isa     => 'Str',
+  default => 'show',
+);
+
 has quitmsg => (
   is      => 'rw',
   isa     => 'Str',
@@ -62,6 +68,12 @@ has auth => (
   is      => 'rw',
   isa     => 'HashRef[Str]',
   default => sub {{}},
+);
+
+has highlights => (
+  is      => 'rw',
+  isa     => 'ArrayRef[Str]',
+  default => sub {[]},
 );
 
 has servers => (

@@ -8569,30 +8569,25 @@ Object.extend(Alice, {
   },
 
   growlNotify: function(message) {
-    if (!window.fluid) return;
-    window.fluid.showGrowlNotification({
+    if (window.fluid) {
+      window.fluid.showGrowlNotification({
         title: message.window.title + ": " + message.nick,
-        description: message.html.stripTags(),
+        description: message.body.unescapeHTML(),
         priority: 1,
         sticky: false,
         identifier: message.msgid
-    });
-  },
-
-  makeSortable: function() {
-    Sortable.create('tabs', {
-      overlap: 'horizontal',
-      constraint: 'horizontal',
-      format: /(.+)/,
-      onUpdate: function (res) {
-        var tabs = res.childElements();
-        var order = tabs.collect(function(t){
-          var m = t.id.match(/(win_[^_]+)_tab/);
-          if (m) return m[1]
-        });
-        if (order.length) alice.connection.sendTabOrder(order);
+      });
+    }
+    else if (window.webkitNotifications) {
+      if (window.webkitNotifications.checkPermission() == 0) {
+        var popup = window.webkitNotifications.createNotification(
+          "http://static.usealice.org/image/alice.png",
+          message.window.title + ": " + message.nick,
+          message.body.unescapeHTML()
+        );
+        popup.show();
       }
-    });
+    }
   },
 
   isSpecialKey: function(keyCode) {
@@ -8602,6 +8597,47 @@ Object.extend(Alice, {
 		];
 		return special_keys.indexOf(keyCode) > -1;
   },
+
+  loadInlineImage: function(image) {
+    var maxWidth = arguments.callee.maxWidth || 300;
+    var maxHeight = arguments.callee.maxHeight || 300;
+    image.style.visibility = 'hidden';
+    if (image.height > image.width && image.height > maxHeight) {
+      image.style.width = 'auto';
+      image.style.height = maxHeight + 'px';
+    }
+    else if (image.width > maxWidth) {
+      image.style.height = 'auto';
+      image.style.width = maxWidth + 'px';
+    }
+    else {
+      image.style.height = 'auto';
+    }
+    image.style.display = 'block';
+    image.style.visibility = 'visible';
+    setTimeout(function () {
+      var messagelist = image.up(".message_wrap");
+      messagelist.scrollTop = messagelist.scrollHeight;
+    }, 50);
+  },
+
+  playAudio: function(image, audio) {
+    image.src = '/static/image/pause.png';
+    if (! audio) {
+      var url = image.nextSibling.href;
+      audio = new Audio(url);
+      audio.addEventListener('ended', function () {
+        image.src = '/static/image/play.png';
+        image.onclick = function () { Alice.playAudio(image, audio) };
+      });
+    }
+    audio.play();
+    image.onclick = function() {
+      audio.pause();
+      this.src = '/static/image/play.png';
+      this.onclick = function () { Alice.playAudio(this, audio) };
+    };
+  }
 });
 
 
@@ -8623,7 +8659,15 @@ Alice.Application = Class.create({
     this.filters = [];
     this.monospaceNicks = ['Shaniqua', 'root', 'p6eval'];
     this.keyboard = new Alice.Keyboard(this);
+
     setTimeout(this.connection.connect.bind(this.connection), 1000);
+
+    this.makeSortable();
+    var active = this.activeWindow();
+    if (active) {
+      active.input.focus();
+      active.scrollToBottom();
+    }
   },
 
   actionHandlers: {
@@ -8655,18 +8699,49 @@ Alice.Application = Class.create({
         win.lastNick = "";
       }
     },
+    connect: function (action) {
+      action.windows.each(function (win_info) {
+        var win = this.getWindow(win_info.id);
+        if (win) {
+          win.enable();
+        }
+      }.bind(this));
+      if (this.configWindow) {
+        this.configWindow.connectServer(action.session);
+      }
+    },
     disconnect: function (action) {
-      var win = this.getWindow(action['window'].id);
-      if (win) {
-        win.disable();
+      action.windows.each(function (win_info) {
+        var win = this.getWindow(win_info.id);
+        if (win) {
+          win.disable();
+        }
+      }.bind(this));
+      if (this.configWindow) {
+        this.configWindow.disconnectServer(action.session);
+      }
+    },
+    focus: function (action) {
+      if (!action.window_number) return;
+      if (action.window_number == "next") {
+        this.nextWindow();
+      }
+      else if (action.window_number.match(/^prev/)) {
+        this.previousWindow();
+      }
+      else if (action.window_number.match(/^\d+$/)) {
+        var tab = $('tabs').down('li', action.window_number);
+        if (tab) {
+          var window_id = tab.id.replace('_tab','');
+          this.getWindow(window_id).focus();
+        }
       }
     }
   },
 
   toggleConfig: function(e) {
-    if (this.configWindow && this.configWindow.focus) {
+    if (this.configWindow && !this.configWindow.closed && this.configWindow.focus) {
       this.configWindow.focus();
-
     } else {
       this.configWindow = window.open(null, "config", "resizable=no,scrollbars=no,status=no,toolbar=no,location=no,width=500,height=480");
       this.connection.getConfig(function (transport) {
@@ -8677,8 +8752,21 @@ Alice.Application = Class.create({
     e.stop();
   },
 
+  togglePrefs: function(e) {
+    if (this.prefWindow && !this.prefWindow.closed && this.prefWindow.focus) {
+      this.prefWindow.focus();
+    } else {
+      this.prefWindow = window.open(null, "prefs", "resizable=no,scrollbars=no,status=no,toolbar=no,location=no,width=200,height=300");
+      this.connection.getPrefs(function (transport) {
+        this.prefWindow.document.write(transport.responseText);
+      }.bind(this));
+    }
+
+    e.stop();
+  },
+
   toggleLogs: function(e) {
-    if (this.logWindow && this.logWindow.focus) {
+    if (this.logWindow && !this.logWindow.closed && this.logWindow.focus) {
       this.logWindow.focus();
     } else {
       this.logWindow = window.open(null, "logs", "resizable=no,scrollbars=no,statusbar=no, toolbar=no,location=no,width=500,height=480");
@@ -8770,7 +8858,7 @@ Alice.Application = Class.create({
       $('tab_overflow_overlay').insert(html.select);
       $(windowId+"_tab_overflow_button").selected = false;
       this.activeWindow().tabOverflowButton.selected = true;
-      Alice.makeSortable();
+      this.makeSortable();
     }
   },
 
@@ -8815,6 +8903,31 @@ Alice.Application = Class.create({
 
   messagesAreMonospacedFor: function(nick) {
     return this.monospaceNicks.indexOf(nick) > -1;
+  },
+
+  focusHash: function(hash) {
+    var hash = window.location.hash;
+    if (hash) {
+      hash = hash.replace(/^#/, "");
+      var focus = this.getWindow(hash)
+      if (focus && !focus.active) focus.focus();
+    }
+  },
+
+  makeSortable: function() {
+    Sortable.create('tabs', {
+      overlap: 'horizontal',
+      constraint: 'horizontal',
+      format: /(.+)/,
+      onUpdate: function (res) {
+        var tabs = res.childElements();
+        var order = tabs.collect(function(t){
+          var m = t.id.match(/(w[^_]+)_tab/);
+          if (m) return m[1]
+        });
+        if (order.length) this.connection.sendTabOrder(order);
+      }.bind(this)
+    });
   }
 });
 Alice.Connection = Class.create({
@@ -8940,6 +9053,13 @@ Alice.Connection = Class.create({
     });
   },
 
+  getPrefs: function(callback) {
+    new Ajax.Request('/prefs', {
+      method: 'get',
+      onSuccess: callback
+    });
+  },
+
   getLog: function(callback) {
     new Ajax.Request('/logs', {
       method: 'get',
@@ -8997,13 +9117,11 @@ Alice.Window = Class.create({
     this.tabButton.observe("click", function(e) {if (this.active) this.close()}.bind(this));
     this.messages.observe("mouseover", this.showNick.bind(this));
     this.scrollToBottom(true);
-    document.observe("dom:loaded", function () {
-      setTimeout(function () {
-        this.messages.select('li.message div.msg').each(function (msg) {
-          msg.innerHTML = application.applyFilters(msg.innerHTML);
-        });
-      }.bind(this), 1000);
-    }.bind(this));
+    setTimeout(function () {
+      this.messages.select('li.message div.msg').each(function (msg) {
+        msg.innerHTML = application.applyFilters(msg.innerHTML);
+      });
+    }.bind(this), 1000);
     if (navigator.userAgent.match(/Chrome/)) {
       $$('tr.input textarea').invoke('setStyle', {padding: '3px'});
     } else if (Prototype.Browser.Gecko) {
@@ -9113,6 +9231,8 @@ Alice.Window = Class.create({
     }
     this.element.redraw();
     this.application.updateChannelSelect();
+    window.location.hash = this.id;
+    window.location = window.location.toString();
   },
 
   markRead: function () {
@@ -9171,7 +9291,7 @@ Alice.Window = Class.create({
   addMessage: function(message) {
     if (!message.html) return;
 
-    this.messages.down('ul').insert(Alice.uncacheGravatar(message.html));
+    this.messages.down('ul').insert(message.html);
     var li = this.messages.down('li:last-child');
 
     if (!message.consecutive) {
@@ -9204,8 +9324,10 @@ Alice.Window = Class.create({
       this.displayTopic(message.body.escapeHTML());
     }
 
-    if (!this.application.isFocused && message.highlight && message.window.title != "info")
+    if (!this.application.isFocused && message.highlight && message.window.title != "info") {
+      message.body = li.down(".msg").innerHTML.stripTags();
       Alice.growlNotify(message);
+    }
 
     if (message.nicks && message.nicks.length)
       this.nicks = message.nicks;

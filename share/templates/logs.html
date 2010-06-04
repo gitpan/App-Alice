@@ -6,20 +6,24 @@
     <script type="text/javascript" src="/static/alice.js"></script>
     <script type="text/javascript">
       sendQuery = function (form) {
+        $('submit').value = "Searching...";
+        $('submit').disable();
         new Ajax.Request("/search", {
           method: "get",
           parameters: form.serialize(),
           onSuccess: function (transport) {
             $('logresults').replace(transport.responseText);
+            $('submit').value = "Search";
+            $('submit').enable();
           }
         });
         return false;
       };
       
-      expandRange = function(channel, time, li) {
+      expandRange = function(channel, id, li) {
         new Ajax.Request('/range', {
           method: "post",
-          parameters: {time: time, channel: channel},
+          parameters: {id: id, channel: channel},
           onSuccess: function (transport) {
             $$('.context').each(function (item) {
               item.select(".context_wrapper").invoke("remove");
@@ -37,10 +41,10 @@
   <body>
     <div id="logsearch">
 <form id="query" onsubmit="return sendQuery(this)">
-  <label for="nick">Nick</label><input size="8" type="text" name="nick" id="nick" />
-  <label for="body">Content</label><input type="text" name="body" id="body" size="14" />
-  <label for="channel">Channel</label><input size="8" type="text" name="channel" id="channel" />
-  <input type="submit" value="Search" />
+  <input type="search" name="body" id="body" style="width:210px;margin-left:5px" placeholder="Message" autofocus />
+  <input style="width:100px" type="search" name="nick" id="nick" placeholder="Nick" />
+  <input style="width:100px" type="search" name="channel" id="channel" placeholder="Channel"/>
+  <input type="submit" value="Search" id="submit" />
 </form>
 </div>
 <ul id="logresults">
