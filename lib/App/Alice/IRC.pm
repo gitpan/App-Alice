@@ -2,6 +2,7 @@ package App::Alice::IRC;
 
 use AnyEvent;
 use AnyEvent::IRC::Client;
+use List::MoreUtils qw/uniq/;
 use Digest::MD5 qw/md5_hex/;
 use Any::Moose;
 use utf8;
@@ -282,12 +283,10 @@ sub registered {
     $self->send_raw($_);
   }
   
-  # merge auto-joined channel list with existing
-  # channels
-  my %channels = map {$_ => $_}
-    (@{$self->config->{channels}}, $self->channels);
+  # merge auto-joined channel list with existing channels
+  my @channels = uniq @{$self->config->{channels}}, $self->channels;
     
-  for (keys %channels) {
+  for (@channels) {
     push @log, "joining $_";
     $self->send_srv("JOIN", split /\s+/);
   }
@@ -413,7 +412,7 @@ sub _join {
   my ($self, $cl, $nick, $channel, $is_self) = @_;
   utf8::decode($_) for ($nick, $channel);
   if (!$self->includes_nick($nick)) {
-    $self->add_nick($nick, {nick => $nick, channels => {$channel => ''}}); 
+    $self->add_nick($nick, {nick => $nick, real => "", channels => {$channel => ''}}); 
   }
   else {
     $self->get_nick_info($nick)->{channels}{$channel} = '';
@@ -437,7 +436,7 @@ sub channel_add {
   if (my $window = $self->find_window($channel)) {
     for (@nicks) {
       if (!$self->includes_nick($_)) {
-        $self->add_nick($_, {nick => $_, channels => {$channel => ''}}); 
+        $self->add_nick($_, {nick => $_, real => "", channels => {$channel => ''}}); 
       }
       else {
         $self->get_nick_info($_)->{channels}{$channel} = '';
@@ -534,6 +533,12 @@ sub irc_352 {
     $info->{channels} = {
       %{$prev_info->{channels}},
       %{$info->{channels}},
+    };
+
+    if ($info->{real} ne $prev_info->{real}) {
+      for (grep {$_->previous_nick eq $nick} $self->windows) {
+        $_->reset_previous_nick;
+      }
     }
   }
   
@@ -607,6 +612,16 @@ sub whois_table {
   return "real: $info->{real}\nuser: $info->{user}\n" .
          "host: $info->{IP}\nserver: $info->{server}\nchannels: " .
          join " ", keys %{$info->{channels}};
+}
+
+sub update_realname {
+  my ($self, $realname) = @_;
+  my $nick = $self->nick_cached;
+  $self->send_srv(REALNAME => $realname);
+  $self->get_nick_info($nick)->{real} = $realname;
+  for (grep {$_->previous_nick eq $nick} $self->windows) {
+    $_->reset_previous_nick;
+  }
 }
 
 __PACKAGE__->meta->make_immutable;

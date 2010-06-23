@@ -14,7 +14,7 @@ use File::Copy;
 use Digest::MD5 qw/md5_hex/;
 use Encode;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 has condvar => (
   is       => 'rw',
@@ -268,6 +268,11 @@ sub handle_command {
   $self->commands->handle($command, $window);
 }
 
+sub reload_commands {
+  my $self = shift;
+  $self->commands->reload_handlers;
+}
+
 sub merge_config {
   my ($self, $new_config) = @_;
   for my $newserver (values %$new_config) {
@@ -378,15 +383,27 @@ sub add_irc_server {
 }
 
 sub reload_config {
-  my $self = shift;
-  for my $irc (keys %{$self->config->servers}) {
-    if (!$self->has_irc($irc)) {
-      $self->add_irc_server(
-        $irc, $self->config->servers->{$irc}
-      );
+  my ($self, $new_config) = @_;
+
+  my %prev = map {$_ => $self->config->servers->{$_}{ircname} || ""}
+             keys %{ $self->config->servers };
+
+  if ($new_config) {
+    $self->config->merge($new_config);
+    $self->config->write;
+  }
+  
+  for my $network (keys %{$self->config->servers}) {
+    my $config = $self->config->servers->{$network};
+    if (!$self->has_irc($network)) {
+      $self->add_irc_server($network, $config);
     }
     else {
-      $self->get_irc($irc)->config($self->config->servers->{$irc});
+      my $irc = $self->get_irc($network);
+      if ($config->{ircname} ne $prev{$network}) {
+        $irc->update_realname($config->{ircname});
+      }
+      $irc->config($config);
     }
   }
   for my $irc ($self->ircs) {

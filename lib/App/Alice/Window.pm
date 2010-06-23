@@ -4,7 +4,7 @@ use Encode;
 use utf8;
 use App::Alice::MessageBuffer;
 use Text::MicroTemplate qw/encoded_string/;
-use IRC::Formatting::HTML;
+use IRC::Formatting::HTML qw/irc_to_html/;
 use Any::Moose;
 
 has type => (
@@ -126,7 +126,7 @@ sub nick {
 }
 
 sub all_nicks {
-  my ($self) = @_;
+  my $self = shift;
   return unless $self->is_channel;
   return $self->irc->channel_nicks($self->title);
 }
@@ -196,7 +196,7 @@ sub format_event {
 sub format_message {
   my ($self, $nick, $body) = @_;
   $body = decode_utf8($body) unless utf8::is_utf8($body);
-  my $html = IRC::Formatting::HTML->formatted_string_to_html($body);
+  my $html = irc_to_html($body);
   $html = make_links_clickable($html);
   my $own_nick = $self->nick;
   my $message = {
@@ -222,7 +222,8 @@ sub format_message {
 
 sub format_announcement {
   my ($self, $msg) = @_;
-  $msg = decode_utf8($msg) unless utf8::is_utf8($msg);
+  $msg = decode_utf8($msg) unless utf8::is_utf8($msg)
+          or ref $msg eq "Text::MicroTemplate::EncodedString";
   my $message = {
     type    => "message",
     event   => "announce",
@@ -230,7 +231,8 @@ sub format_announcement {
     message => $msg,
   };
   $message->{html} = $self->app->render('announcement', $message);
-  $self->buffer->previous_nick('');
+  $message->{message} = "$message->{message}";
+  $self->reset_previous_nick;
   return $message;
 }
 
@@ -245,8 +247,11 @@ sub close_action {
 }
 
 sub nick_table {
-  my $self = shift;
-  return _format_nick_table($self->all_nicks(1));
+  my ($self, $avatars) = @_;
+  if ($avatars) {
+    return encoded_string($self->app->render("avatargrid", $self));
+  }
+  return _format_nick_table($self->all_nicks);
 }
 
 sub make_links_clickable {
@@ -274,6 +279,16 @@ sub _format_nick_table {
   }
   push @rows, [@row] if @row;
   return join "\n", map {join " ", @$_} @rows;
+}
+
+sub reset_previous_nick {
+  my $self = shift;
+  $self->buffer->previous_nick("");
+}
+
+sub previous_nick {
+  my $self = shift;
+  return $self->buffer->previous_nick;
 }
 
 __PACKAGE__->meta->make_immutable;

@@ -9,11 +9,14 @@ use Plack::Builder;
 use Plack::Middleware::Static;
 use Plack::Session::Store::File;
 
+use IRC::Formatting::HTML qw/html_to_irc/;
+
 use App::Alice::Stream;
 use App::Alice::Commands;
 
 use JSON;
 use Encode;
+use utf8;
 use Any::Moose;
 use Try::Tiny;
 
@@ -129,9 +132,12 @@ sub login {
       $res->redirect("/");
       return $res->finalize;
     }
+    $res->body($self->app->render("login", "bad username or password"));
+  }
+  else {
+    $res->body($self->app->render("login"));
   }
   $res->status(200);
-  $res->body($self->app->render("login"));
   return $res->finalize;
 }
 
@@ -234,7 +240,9 @@ sub purge_disconnects {
 sub handle_message {
   my ($self, $req) = @_;
   my $msg  = $req->param('msg');
-  utf8::decode($msg);
+  my $is_html = $req->param('html');
+  utf8::decode($msg) unless utf8::is_utf8($msg);
+  $msg = html_to_irc($msg) if $is_html;
   my $source = $req->param('source');
   my $window = $self->app->get_window($source);
   if ($window) {
@@ -380,9 +388,7 @@ sub save_config {
       $new_config->{$name} = $req->param($name);
     }
   }
-  $self->config->merge($new_config);
-  $self->app->reload_config();
-  $self->config->write;
+  $self->app->reload_config($new_config);
 
   $self->app->broadcast(
     $self->app->format_info("config", "saved")

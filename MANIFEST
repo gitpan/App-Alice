@@ -33,9 +33,10 @@ Makefile.PL
 MANIFEST			This list of files
 MANIFEST.SKIP
 META.yml
+share/commands.pl
 share/log.db
 share/log.sql
-share/static/alice-min.js
+share/static/alice.css
 share/static/alice.js
 share/static/favicon.ico
 share/static/image/alice.png
@@ -43,6 +44,8 @@ share/static/image/aquaTabClose.png
 share/static/image/background-self.png
 share/static/image/background.png
 share/static/image/config.png
+share/static/image/formatting.acorn
+share/static/image/formatting.png
 share/static/image/overflow-active.png
 share/static/image/overflow.png
 share/static/image/pause.png
@@ -60,9 +63,10 @@ share/static/image/smartTranscriptTabActivity.png
 share/static/image/speech.png
 share/static/image/terminal.png
 share/static/iphone.css
-share/static/site.css
+share/static/iscroll.js
 share/static/site.js
 share/templates/announcement.html
+share/templates/avatargrid.html
 share/templates/event.html
 share/templates/help.html
 share/templates/index_footer.html
