@@ -90,3 +90,4 @@ t/02-app.t
 t/03-window.t
 t/04-irc.t
 t/alice/test_config
+t/pod.t

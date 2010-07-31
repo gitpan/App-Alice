@@ -102,15 +102,15 @@ sub BUILD {
     privatemsg     => sub{$self->privatemsg(@_)},
     connect        => sub{$self->connected(@_)},
     disconnect     => sub{$self->disconnected(@_)},
-    irc_001        => sub{$self->log(debug => $_[1]->{params}[-1])},
+    irc_001        => sub{$self->log_message($_[1])},
     irc_352        => sub{$self->irc_352(@_)}, # WHO info
     irc_366        => sub{$self->irc_366(@_)}, # end of NAMES
-    irc_372        => sub{$self->mlog(debug => $_[1]->{params}[-1])}, # MOTD info
-    irc_377        => sub{$self->mlog(debug => $_[1]->{params}[-1])}, # MOTD info
-    irc_378        => sub{$self->mlog(debug => $_[1]->{params}[-1])}, # MOTD info
+    irc_372        => sub{$self->log_message(mono => 1, $_[1])}, # MOTD info
+    irc_377        => sub{$self->log_message(mono => 1, $_[1])}, # MOTD info
+    irc_378        => sub{$self->log_message(mono => 1, $_[1])}, # MOTD info
     irc_401        => sub{$self->irc_401(@_)},
-    irc_432        => sub{$self->nick; $self->log(debug => $_[1]->{params}[-1])}, # Bad nick
-    irc_433        => sub{$self->nick; $self->log(debug => $_[1]->{params}[-1])}, # Bad nick
+    irc_432        => sub{$self->nick; $self->log_message($_[1])}, # Bad nick
+    irc_433        => sub{$self->nick; $self->log_message($_[1])}, # Bad nick
     irc_464        => sub{$self->disconnect("bad USER/PASS")},
   );
   $self->cl->ctcp_auto_reply ('VERSION', ['VERSION', "alice $App::Alice::VERSION"]);
@@ -150,15 +150,23 @@ sub shutdown {
 }
 
 sub log {
-  my ($self, $level, @messages) = @_;
-  $self->broadcast(map {$self->format_info($_)} @messages);
-  $self->app->log($level => "[".$self->alias . "] $_") for @messages;
+  my $messages = pop;
+  $messages = [ $messages ] unless ref $messages eq "ARRAY";
+
+  my ($self, $level, %options) = @_;
+
+  my @lines = map {$self->format_info($_, %options)} @$messages;
+  $self->broadcast(@lines);
+  $self->app->log($level => "[".$self->alias . "] $_") for @$messages;
 }
 
-sub mlog {
-  my ($self, $level, @messages) = @_;
-  $self->broadcast(map {$self->format_info($_, mono => 1)} @messages);
-  $self->app->log($level => "[".$self->alias . "] $_") for @messages;
+sub log_message {
+  my $message = pop;
+
+  my ($self, %options) = @_;
+  if (@{$message->{params}}) {
+    $self->log("debug", %options, [ pop @{$message->{params}} ]);
+  }
 }
 
 sub format_info {
@@ -291,7 +299,7 @@ sub registered {
     $self->send_srv("JOIN", split /\s+/);
   }
   
-  $self->log(debug => @log);
+  $self->log(debug => \@log);
 };
 
 sub disconnected {
@@ -404,7 +412,7 @@ sub nick_change {
   $self->rename_nick($old_nick, $new_nick);
   $self->broadcast(
     map  {$_->format_event("nick", $old_nick, $new_nick)}
-    grep {$_} $self->nick_windows($new_nick)
+    $self->nick_windows($new_nick)
   );
 }
 
@@ -418,8 +426,13 @@ sub _join {
     $self->get_nick_info($nick)->{channels}{$channel} = '';
   }
   if ($is_self) {
-    my $window = $self->app->create_window($channel, $self);
+
+    # self->window uses find_or_create, so we don't create
+    # duplicate windows here
+    my $window = $self->window($channel);
+
     $self->broadcast($window->join_action);
+
     # client library only sends WHO if the server doesn't
     # send hostnames with NAMES list (UHNAMES), we to WHO always
     $self->send_srv("WHO" => $channel) if $cl->isupport("UHNAMES");
@@ -492,7 +505,7 @@ sub channel_topic {
 
 sub channel_nicks {
   my ($self, $channel) = @_;
-  return map {$_->{nick}} grep {exists $_->{channels}{$channel}} $self->all_nick_info;
+  return [ map {$_->{nick}} grep {exists $_->{channels}{$channel}} $self->all_nick_info ];
 }
 
 sub nick_channels {
@@ -504,7 +517,7 @@ sub nick_channels {
 sub nick_windows {
   my ($self, $nick) = @_;
   if ($self->nick_channels($nick)) {
-    return map {$self->find_window($_)} $self->nick_channels($nick);
+    return grep {$_} map {$self->find_window($_)} $self->nick_channels($nick);
   }
   return;
 }
@@ -618,7 +631,9 @@ sub update_realname {
   my ($self, $realname) = @_;
   my $nick = $self->nick_cached;
   $self->send_srv(REALNAME => $realname);
-  $self->get_nick_info($nick)->{real} = $realname;
+  if (my $info = $self->get_nick_info($nick)) { 
+    $info->{real} = $realname;
+  }
   for (grep {$_->previous_nick eq $nick} $self->windows) {
     $_->reset_previous_nick;
   }

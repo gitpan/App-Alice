@@ -7,6 +7,8 @@ use Text::MicroTemplate qw/encoded_string/;
 use IRC::Formatting::HTML qw/irc_to_html/;
 use Any::Moose;
 
+my $url_regex = qr/\b(https?:\/\/(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»“”‘’]))/i;
+
 has type => (
   is      => 'ro',
   isa     => 'Str',
@@ -117,6 +119,7 @@ sub serialized {
     title      => $self->title,
     is_channel => $self->is_channel,
     type       => $self->type,
+    hashtag    => $self->hashtag,
   };
 }
 
@@ -127,7 +130,7 @@ sub nick {
 
 sub all_nicks {
   my $self = shift;
-  return unless $self->is_channel;
+  return [] unless $self->is_channel;
   return $self->irc->channel_nicks($self->title);
 }
 
@@ -136,7 +139,7 @@ sub join_action {
   my $action = {
     type      => "action",
     event     => "join",
-    nicks     => [ $self->all_nicks ],
+    nicks     => $self->all_nicks,
     window    => $self->serialized,
   };
   $action->{html}{window} = $self->app->render("window", $self);
@@ -150,7 +153,7 @@ sub nicks_action {
   return {
     type   => "action",
     event  => "nicks",
-    nicks  => [ $self->all_nicks ],
+    nicks  => $self->all_nicks,
     window => $self->serialized,
   };
 }
@@ -184,7 +187,7 @@ sub format_event {
     body      => $body,
     msgid     => $self->app->next_msgid,
     timestamp => $self->timestamp,
-    nicks     => [ $self->all_nicks ],
+    nicks     => $self->all_nicks,
   };
   $message->{html} = make_links_clickable(
     $self->app->render("event", $message)
@@ -196,7 +199,11 @@ sub format_event {
 sub format_message {
   my ($self, $nick, $body) = @_;
   $body = decode_utf8($body) unless utf8::is_utf8($body);
-  my $html = irc_to_html($body);
+
+  my $monospace = $self->app->is_monospace_nick($nick);
+  # pass the inverse => italic option if this is NOT monospace
+  my $html = irc_to_html($body, ($monospace ? () : (invert => "italic")));
+
   $html = make_links_clickable($html);
   my $own_nick = $self->nick;
   my $message = {
@@ -209,7 +216,7 @@ sub format_message {
     self      => $own_nick eq $nick,
     msgid     => $self->app->next_msgid,
     timestamp => $self->timestamp,
-    monospaced => $self->app->is_monospace_nick($nick),
+    monospaced => $monospace,
     consecutive => $nick eq $self->buffer->previous_nick ? 1 : 0,
   };
   unless ($message->{self}) {
@@ -256,21 +263,21 @@ sub nick_table {
 
 sub make_links_clickable {
   my $html = shift;
-  $html =~ s/\b(([\w-]+:\/\/?|www[.])[^\s()<>]+(?:\([\w\d]+\)|([^[:punct:]\s]|\/)))/<a href="$1" target="_blank" rel="noreferrer">$1<\/a>/gi;
+  $html =~ s/$url_regex/<a href="$1" target="_blank" rel="noreferrer">$1<\/a>/gi;
   return $html;
 }
 
 sub _format_nick_table {
-  my @nicks = @_;
-  return "" unless @nicks;
+  my $nicks = shift;
+  return "" unless @$nicks;
   my $maxlen = 0;
-  for (@nicks) {
+  for (@$nicks) {
     my $length = length $_;
     $maxlen = $length if $length > $maxlen;
   }
   my $cols = int(74  / $maxlen + 2);
   my (@rows, @row);
-  for (sort {lc $a cmp lc $b} @nicks) {
+  for (sort {lc $a cmp lc $b} @$nicks) {
     push @row, $_ . " " x ($maxlen - length $_);
     if (@row >= $cols) {
       push @rows, [@row];
@@ -289,6 +296,14 @@ sub reset_previous_nick {
 sub previous_nick {
   my $self = shift;
   return $self->buffer->previous_nick;
+}
+
+sub hashtag {
+  my $self = shift;
+  if ($self->type eq "info") {
+    return "/" . $self->title;
+  }
+  return "/" . $self->session . "/" . $self->title;
 }
 
 __PACKAGE__->meta->make_immutable;
