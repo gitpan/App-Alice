@@ -1,3 +1,11 @@
+0.18  Tue 10 Aug 2010
+        - Shortcuts work on Linux and Windows
+        - Alt-[0-9] shortcuts added to jump to tab
+        - javascript bug fixes
+        - Added link to grant Chrome permission
+          for notifications
+        - Fixed tab order saving
+
 0.17  Fri 30 Jul 2010
         - Improved URL regex (thanks gruber)
         - Added color chooser to wysiwyg
@@ -7,6 +15,8 @@
         - Better iPad display
         - Some changes to improve memory usage
           by a small amount 
+        - URL hash tags for each tab include network
+          and tab name, instead of md5 of them
 
 0.16  Fri 18 Jun 2010
         - Added basic wysiwyg input field

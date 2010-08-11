@@ -15,7 +15,7 @@ use Digest::MD5 qw/md5_hex/;
 use List::Util qw/first/;
 use Encode;
 
-our $VERSION = '0.17';
+our $VERSION = '0.18';
 
 has condvar => (
   is       => 'rw',
@@ -241,11 +241,12 @@ sub init_shutdown {
   $self->shutting_down(1);
   $self->history(undef);
   $self->alert("Alice server is shutting down");
-  if ($self->ircs) {
+  if ($self->connected_ircs) {
     print STDERR "\nDisconnecting, please wait\n" if $self->standalone;
-    $_->init_shutdown($msg) for $self->ircs;
+    $_->init_shutdown($msg) for $self->connected_ircs;
   }
   else {
+    print "\n";
     $self->shutdown;
     return;
   }
@@ -340,7 +341,7 @@ sub create_window {
 
 sub _build_window_id {
   my ($self, $title, $session) = @_;
-  "w" . md5_hex(encode_utf8(lc $self->user."-$title-$session"));
+  md5_hex(encode_utf8(lc $self->user."-$title-$session"));
 }
 
 sub find_or_create_window {
