@@ -1,10 +1,8 @@
 ? my ($app, @windows) = @_;
-
-        <script type="text/javascript" src="<?= $app->static_url("alice.js") ?>?mtime=1272819991"></script>
-        <script type="text/javascript" src="<?= $app->static_url("site.js") ?>?images=<?= $_[0]->config->images || 'show' ?>&amp;mtime=1272819991"></script>
         <script type="text/javascript">
           document.observe("dom:loaded", function () {
             alice.connection.msgid = <?= $_[0]->msgid ?>;
+            var orig_hash = window.location.hash;
             <? for my $window (@windows) { ?>
               alice.openWindow(
                 '<?= $window->id ?>',
@@ -13,7 +11,9 @@
                 '<?= $window->hashtag ?>'
               );
             <? } ?>
-            alice.focusHash();
+            alice.focusHash(orig_hash);
+            // required due to browser weirdness with scrolltobottom on initial focus
+            setTimeout(function(){alice.activeWindow().scrollToBottom(true)}, 1);
           });
         </script>
       </div>

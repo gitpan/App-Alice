@@ -22,6 +22,10 @@ sub irc {
   return undef;
 }
 
+sub all_nicks {
+  return [];
+}
+
 sub format_message {
   my ($self, $from, $body, %options) = @_;
   my $html = irc_to_html($body);
@@ -34,7 +38,7 @@ sub format_message {
     self   => $options{self} ? 1 : 0,
     hightlight => $options{highlight} ? 1 : 0,
     msgid  => $self->app->next_msgid,
-    timestamp => $self->timestamp,
+    timestamp => time,
     monospaced => $options{mono} ? 1 : 0,
     consecutive => $from eq $self->buffer->previous_nick ? 1 : 0,
   };

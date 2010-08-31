@@ -24,42 +24,33 @@ test_requires 'Test::More' => '0.86';
 test_requires 'Test::TCP' => '0';
 install_share 'share';
 install_script 'bin/alice';
-no_index 'directory' => 'share/sprockets';
 
 postamble q{
 BUILD := share/static
 SOURCE := src
 JS_SOURCE := $(SOURCE)/js
 CSS_SOURCE := $(SOURCE)/css
-SPROCKETS := alice prototype scriptaculous shortcut iscroll wysihat
+SPROCKETS := alice prototype scriptaculous shortcut wysihat sprintf
 INCLUDES := $(foreach sprocket,$(SPROCKETS),$(JS_SOURCE)/$(sprocket)/src)
 INCLUDE := $(foreach dir,$(INCLUDES),-I $(dir))
 JAVASCRIPT_SOURCES := $(foreach dir,$(INCLUDES),$(wildcard $(dir)/*.js))
 
-CAN_COMPRESS := `which yuicompressor`
-
-ALICE_CSS := $(CSS_SOURCE)/alice.css
-SITE_CSS := $(BUILD)/alice.css
+ALICE_SCSS := $(CSS_SOURCE)/alice.scss
 ALICE_JS := $(JS_SOURCE)/alice/src/alice.js
 SITE_JS := $(BUILD)/alice.js
 
-clean_assets:
-	rm $(BUILD)/*.css
-	rm $(BUILD)/*.js
+COLORFILES := $(foreach dir,$(CSS_SOURCE)/colors,$(wildcard $(dir)/*.scss))
+CSSFILES := $(addprefix $(BUILD)/alice-,$(notdir $(COLORFILES:.scss=.css)))
+
+$(BUILD)/alice-%.css: $(CSS_SOURCE)/colors/%.scss $(ALICE_SCSS)
+	cat $< $(ALICE_SCSS) | sass --scss -s $@
 
 assets: stylesheets javascript
-	yuicompressor $(SITE_CSS) -o $(SITE_CSS)
-	yuicompressor $(BUILD)/iphone.css -o $(BUILD)/iphone.css
-	yuicompressor $(SITE_JS) -o $(SITE_JS)
-	yuicompressor $(BUILD)/site.js -o $(BUILD)/site.js
-		
-stylesheets:
-	cp $(ALICE_CSS) $(SITE_CSS)
-	cp $(CSS_SOURCE)/iphone.css $(BUILD)/iphone.css
-  
+
+stylesheets: $(CSSFILES)
+
 javascript: $(JAVASCRIPT_SOURCES)
 	sprocketize $(INCLUDE) $(ALICE_JS) > $(SITE_JS)
-	cp $(JS_SOURCE)/site.js $(BUILD)/site.js
 };
 
 WriteAll;

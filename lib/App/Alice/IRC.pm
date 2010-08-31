@@ -2,6 +2,7 @@ package App::Alice::IRC;
 
 use AnyEvent;
 use AnyEvent::IRC::Client;
+use List::Util qw/min first/;
 use List::MoreUtils qw/uniq/;
 use Digest::MD5 qw/md5_hex/;
 use Any::Moose;
@@ -59,19 +60,21 @@ has [qw/is_connected disabled removed/] => (
   default => 0,
 );
 
-has nicks => (
+has _nicks => (
   is        => 'rw',
-  isa       => 'HashRef[HashRef|Undef]',
-  default   => sub {{}},
+  isa       => 'ArrayRef[HashRef|Undef]',
+  default   => sub {[]},
 );
 
-sub remove_nick {delete $_[0]->nicks->{$_[1]}}
-sub includes_nick {exists $_[0]->nicks->{$_[1]}}
-sub get_nick_info {$_[0]->nicks->{$_[1]}}
-sub all_nicks {keys %{$_[0]->nicks}}
-sub all_nick_info {values %{$_[0]->nicks}}
-sub set_nick_info {$_[0]->nicks->{$_[1]} = $_[2]}
-sub clear_nicks {$_[0]->nicks({})}
+sub nicks {@{$_[0]->_nicks}}
+sub all_nicks {[map {$_->{nick}} @{$_[0]->_nicks}]}
+sub add_nick {push @{$_[0]->_nicks}, $_[1]}
+sub remove_nick {$_[0]->_nicks([grep {$_->{nick} ne $_[1]} $_[0]->nicks])}
+sub get_nick_info {first {$_->{nick} eq $_[1]} $_[0]->nicks}
+sub includes_nick {$_[0]->get_nick_info($_[1])}
+sub all_nick_info {$_[0]->nicks}
+sub set_nick_info {$_[0]->remove_nick($_[1]); $_[0]->add_nick($_[2]);}
+sub clear_nicks {$_[0]->_nicks([])}
 
 has whois_cbs => (
   is        => 'rw',
@@ -208,19 +211,22 @@ sub channels {
 
 sub connect {
   my $self = shift;
+
   $self->disabled(0);
-  $self->cl->{enable_ssl} = $self->config->{ssl} ? 1 : 0;
   $self->increase_reconnect_count;
+
+  $self->cl->{enable_ssl} = $self->config->{ssl} ? 1 : 0;
+
+  # some people don't set these, wtf
   if (!$self->config->{host} or !$self->config->{port}) {
     $self->log(info => "can't connect: missing either host or port");
     return;
   }
-  if ($self->reconnect_count > 1) {
-    $self->log(info => "reconnecting: attempt " . $self->reconnect_count);
-  }
-  else {
-    $self->log(debug => "connecting");
-  }
+
+  $self->reconnect_count > 1 ? 
+    $self->log(info => "reconnecting: attempt " . $self->reconnect_count)
+  : $self->log(debug => "connecting");
+
   $self->cl->connect(
     $self->config->{host}, $self->config->{port}
   );
@@ -228,40 +234,46 @@ sub connect {
 
 sub connected {
   my ($self, $cl, $err) = @_;
+
   if (defined $err) {
     $self->log(info => "connect error: $err");
-    $self->reconnect(60);
+    $self->reconnect();
+    return;
   }
-  else {
-    $self->log(info => "connected");
-    $self->reset_reconnect_count;
-    $self->connect_time(time);
-    $self->is_connected(1);
-    $self->cl->register(
-      $self->nick, $self->config->{username},
-      $self->config->{ircname}, $self->config->{password}
-    );
-    $self->broadcast({
-      type => "action",
-      event => "connect",
-      session => $self->alias,
-      windows => [map {$_->serialized} $self->windows],
-    });
-  }
+
+  $self->log(info => "connected");
+  $self->reset_reconnect_count;
+  $self->connect_time(time);
+  $self->is_connected(1);
+
+  $self->cl->register(
+    $self->nick, $self->config->{username},
+    $self->config->{ircname}, $self->config->{password}
+  );
+
+  $self->broadcast({
+    type => "action",
+    event => "connect",
+    session => $self->alias,
+    windows => [map {$_->serialized} $self->windows],
+  });
 }
 
 sub reconnect {
   my ($self, $time) = @_;
-  if ($self->reconnect_count > 4) {
-    $self->log(info => "too many failed reconnects, giving up");
-    return;
-  }
+
   my $interval = time - $self->connect_time;
-  if ($interval < 30) {
-    $time = 30 - $interval;
-    $self->log(debug => "last attempt was within 30 seconds, delaying $time seconds")
+
+  if ($interval < 15) {
+    $time = 15 - $interval;
+    $self->log(debug => "last attempt was within 15 seconds, delaying $time seconds")
   }
-  $time = 60 unless $time >= 0;
+
+  if (!defined $time) {
+    # increase timer by 15 seconds each time, until it hits 5 minutes
+    $time = min 60 * 5, 15 * $self->reconnect_count;
+  }
+
   $self->log(debug => "reconnecting in $time seconds");
   $self->reconnect_timer(
     AnyEvent->timer(after => $time, cb => sub {
@@ -420,7 +432,7 @@ sub _join {
   my ($self, $cl, $nick, $channel, $is_self) = @_;
   utf8::decode($_) for ($nick, $channel);
   if (!$self->includes_nick($nick)) {
-    $self->add_nick($nick, {nick => $nick, real => "", channels => {$channel => ''}}); 
+    $self->add_nick({nick => $nick, real => "", channels => {$channel => ''}}); 
   }
   else {
     $self->get_nick_info($nick)->{channels}{$channel} = '';
@@ -449,7 +461,7 @@ sub channel_add {
   if (my $window = $self->find_window($channel)) {
     for (@nicks) {
       if (!$self->includes_nick($_)) {
-        $self->add_nick($_, {nick => $_, real => "", channels => {$channel => ''}}); 
+        $self->add_nick({nick => $_, real => "", channels => {$channel => ''}}); 
       }
       else {
         $self->get_nick_info($_)->{channels}{$channel} = '';
@@ -590,14 +602,12 @@ sub rename_nick {
 
 sub remove_nicks {
   my ($self, @nicks) = @_;
-  for (@nicks) {
-    $self->remove_nick($_);
-  }
-}
-
-sub add_nick {
-  my ($self, $nick, $data) = @_;
-  $self->set_nick_info($nick, $data);
+  $self->_nicks(
+    grep {
+      my $nick = $_;
+      first {$nick eq $_} @nicks ? 0 : 1;
+    } $self->nicks
+  );
 }
 
 sub nick_avatar {

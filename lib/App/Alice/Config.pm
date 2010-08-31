@@ -13,12 +13,7 @@ has assetdir => (
     if (-e "$FindBin::Bin/../share/templates") {
       return "$FindBin::Bin/../share";
     }
-    elsif ($FindBin::Script eq "script") {
-      return "$FindBin::Bin/share";
-    }
-    else {
-      return dist_dir('App-Alice');
-    }
+    return dist_dir('App-Alice');
   }
 );
 
@@ -32,6 +27,18 @@ has avatars => (
   is      => 'rw',
   isa     => 'Str',
   default => "show",
+);
+
+has style => (
+  is      => 'rw',
+  isa     => 'Str',
+  default => 'default',
+);
+
+has timeformat => (
+  is      => 'rw',
+  isa     => 'Str',
+  default => '24',
 );
 
 has alerts => (

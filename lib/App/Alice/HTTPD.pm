@@ -214,6 +214,8 @@ sub setup_stream {
       queue      => [ map({$_->join_action} $self->app->windows) ],
       writer     => $respond,
       start_time => $req->param('t'),
+      # android requires 4K updates to trigger loading event
+      min_bytes  => $req->user_agent =~ /android/i ? 4096 : 0,
     );
     $self->add_stream($stream);
     $self->app->with_messages(sub {
@@ -244,11 +246,16 @@ sub handle_message {
   my $window = $self->app->get_window($source);
   if ($window) {
     for (split /\n/, $msg) {
-      eval {$self->app->handle_command($_, $window) if length $_};
-      if ($@) {$self->app->log(info => $@)}
+      try {
+        $self->app->handle_command($_, $window) if length $_
+      } catch {
+        $self->app->log(info => $_);
+      }
     }
   }
   my $res = $req->new_response(200);
+  $res->content_type('text/plain');
+  $res->content_length(2);
   $res->body('ok');
   return $res->finalize;
 }
@@ -392,6 +399,8 @@ sub save_config {
   );
 
   my $res = $req->new_response(200);
+  $res->content_type('text/plain');
+  $res->content_length(2);
   $res->body('ok');
   return $res->finalize;
 }
@@ -402,6 +411,8 @@ sub tab_order  {
   
   $self->app->tab_order([grep {defined $_} $req->parameters->get_all('tabs')]);
   my $res = $req->new_response(200);
+  $res->content_type('text/plain');
+  $res->content_length(2);
   $res->body('ok');
   return $res->finalize;
 }

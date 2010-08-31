@@ -45,10 +45,9 @@ has 'writer' => (
   required => 1,
 );
 
-has callback => (
-  is  => 'rw',
-  isa => 'CodeRef',
-  default => sub {sub{}}
+has min_bytes => (
+  is => 'ro',
+  default => 1024,
 );
 
 sub BUILD {
@@ -134,6 +133,7 @@ sub to_string {
   }, {utf8 => 1});
 
   $output .= "\n--" . $self->seperator . "\n";
+  $output .= " " x ($self->min_bytes - length $output);
 
   return $output
 }

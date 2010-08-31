@@ -4,34 +4,32 @@
 <html>
   <head>
     <title><?= $titlewin->title ?></title>
+    <script type="text/javascript" src="<?= $app->static_url("alice.js") ?>?images=<?= $_[0]->config->images || 'show' ?>&amp;debug=<?= $app->config->show_debug ? 'true' : 'false' ?>&amp;timeformat=<?= $app->config->timeformat ?>&amp;mtime=1272819991"></script>
     <link rel="shortcut icon" href="<?= $app->static_url("favicon.ico") ?>">
-    <link type="text/css" rel="stylesheet" href="<?= $app->static_url("alice.css") ?>" />
+    <link type="text/css" rel="stylesheet" href="<?= $app->static_url("alice-".$app->config->style.".css") ?>" />
     <link rel="apple-touch-icon" href="<?= $app->static_url("image/alice.png") ?>" />
     <link rel="apple-touch-startup-image" href="<?= $app->static_url("image/alice.png") ?>" />
-    <!--[if !IE]>--> 
-    <link rel="stylesheet" href="<?= $app->static_url("iphone.css") ?>" type="text/css" 
-          media="only screen and (max-device-width: 480px)" /> 
-    <!--<![endif]-->
     <meta name="viewport" content="width=device-width; initial-scale=1; maximum-scale=1" />
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
   </head>
   <body>
+    <img style="position:absolute;top:-100px;left:-100px" src="<?= $app->static_url("image/sprites.png") ?>" />
     <div id="container">
       <ul id="controls">
         <li id="config_button">
-          <img src="<?= $app->static_url("image/config.png") ?>" />
           <select class="select_overlay" id="config_overlay">
-            <option>Logs</option>
-            <option>Preferences</option>
-            <option>Connections</option>
-            <option>Help</option>
+            <option value="Logs">Logs</option>
+            <option value="Preferences">Preferences</option>
+            <option value="Connections">Connections</option>
+            <option value="Help">Help</option>
             <? if ($_[0]->auth_enabled) { ?>
             <option disabled>──────</option>
-            <option>Logout</option>
+            <option value="Logout">Logout</option>
             <? } ?>
           </select>
         </li>
         <li id="tab_overflow_button">
-          <img src="<?= $app->static_url("image/overflow.png") ?>" />
           <select class="select_overlay" id="tab_overflow_overlay">
             <? for my $window (@windows) { ?>
               <?= $_mt->render_file('select.html', $_[0], $window); ?>
